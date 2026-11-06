@@ -1,0 +1,275 @@
+// Regras combinadas: preservam /atendimentos (legado) e protegem /pedidos com login.
+// Antes de publicar, compare com as regras atualmente existentes no projeto.
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function profilePath() { return /databases/$(database)/documents/usuarios/$(request.auth.uid); }
+    function member() {
+      return signedIn()
+        && exists(profilePath())
+        && get(profilePath()).data.ativo == true
+        && get(profilePath()).data.nome is string
+        && get(profilePath()).data.nome.size() > 0;
+    }
+    function memberName() { return get(profilePath()).data.nome; }
+
+    // Um usuário consulta somente o seu próprio perfil.
+    // Criação/edição de perfis SOMENTE pelo Console/Admin SDK.
+    match /usuarios/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow list, create, update, delete: if false;
+    }
+
+    // LEGADO: Controle de Atendimentos segue usando autenticação anônima.
+    // ATENÇÃO: estes registros NÃO estão protegidos contra visitantes anônimos.
+    function anonymousLegacy() {
+      return signedIn() && request.auth.token.firebase.sign_in_provider == 'anonymous';
+    }
+    function validAttendance(id) {
+      let d = request.resource.data;
+      return d.keys().hasOnly([
+        'id','createdAt','client','company','phone','technician',
+        'equipment','status','reason','checked','notes'
+      ])
+      && d.keys().hasAll([
+        'id','createdAt','client','company','phone','technician',
+        'equipment','status','reason','checked','notes'
+      ])
+      && d.id is string && d.id == id && d.id.size() <= 100 && d.id.size() > 0
+      && d.createdAt is string && d.createdAt.size() <= 64
+      && d.client is string && d.client.size() > 0 && d.client.size() <= 160
+      && d.company is string && d.company.size() > 0 && d.company.size() <= 160
+      && d.phone is string && d.phone.size() > 0 && d.phone.size() <= 40
+      && d.technician in ['João','Ricardo','']
+      && d.equipment is string && d.equipment.size() <= 160
+      && d.status in ['pendente','resolvido','nao_resolvido']
+      && d.reason in [
+        '', 'Manutenção eletrônica', 'Manutenção mecânica',
+        'Falta de itens', 'Itens incorretos', 'Cartucho Vencido',
+        'Cartucho Avariado', 'Procedimentos incorretos',
+        'Sem continuidade do atendimento'
+      ]
+      && d.checked is bool
+      && d.notes is string && d.notes.size() <= 10000;
+    }
+    match /atendimentos/{attendanceId} {
+      allow read, delete: if anonymousLegacy();
+      allow create, update: if anonymousLegacy() && validAttendance(attendanceId);
+    }
+
+    // Acesso aos pedidos só por conta com perfil ativo, definido pelo administrador.
+    function orderPath(orderId) { return /databases/$(database)/documents/pedidos/$(orderId); }
+    function eventPath(orderId,eventId) { return /databases/$(database)/documents/pedidos/$(orderId)/eventos/$(eventId); }
+    function validOrder(id) {
+      let d = request.resource.data;
+      return d.keys().hasOnly([
+        'id','pv','client','salesperson','equipment',
+        'pcpStatus','assistStatus','observations','createdAt','updatedAt',
+        'createdByUid','createdByName','updatedByUid','updatedByName',
+        'updatedAtServer','revision','lastEventId'
+      ])
+      && d.keys().hasAll([
+        'id','pv','client','salesperson','equipment',
+        'pcpStatus','assistStatus','observations','createdAt','updatedAt'
+      ])
+      && d.id is string && d.id == id && d.id.size() > 0 && d.id.size() <= 100
+      && d.pv is string && d.pv.size() > 0 && d.pv.size() <= 55
+      && d.client is string && d.client.size() > 0 && d.client.size() <= 160
+      && d.salesperson is string && d.salesperson.size() > 0 && d.salesperson.size() <= 120
+      && d.equipment is string && d.equipment.size() > 0 && d.equipment.size() <= 160
+      && d.pcpStatus in ['pendente','confirmado','recusado']
+      && d.assistStatus in ['pendente','confirmado','recusado']
+      && d.observations is string && d.observations.size() <= 10000
+      && d.createdAt is string && d.createdAt.size() <= 64
+      && d.updatedAt is string && d.updatedAt.size() <= 64;
+    }
+    function createdOrder(id) {
+      let d = request.resource.data;
+      return member() && validOrder(id)
+        && d.keys().hasAll([
+          'createdByUid','createdByName','updatedByUid','updatedByName',
+          'updatedAtServer','revision','lastEventId'
+        ])
+        && d.createdByUid == request.auth.uid
+        && d.createdByName == memberName()
+        && d.updatedByUid == request.auth.uid
+        && d.updatedByName == memberName()
+        && d.updatedAtServer == request.time
+        && d.pcpStatus == 'pendente' && d.assistStatus == 'pendente'
+        && d.revision == 0 && d.lastEventId == '';
+    }
+    function editedOrder(id) {
+      let d = request.resource.data;
+      return member() && validOrder(id)
+        && d.keys().hasAll([
+          'updatedByUid','updatedByName','updatedAtServer','revision','lastEventId'
+        ])
+        && d.diff(resource.data).affectedKeys().hasOnly([
+          'pv','client','salesperson','equipment','pcpStatus','assistStatus',
+          'updatedAt','updatedAtServer','updatedByUid','updatedByName',
+          'revision','lastEventId'
+        ])
+        && d.revision is int && d.revision == resource.data.get('revision', 0) + 1
+        && d.lastEventId is string && d.lastEventId.size() > 0 && d.lastEventId.size() <= 100
+        && d.updatedByUid == request.auth.uid
+        && d.updatedByName == memberName()
+        && d.updatedAtServer == request.time
+        // O evento precisa ser criado NESTA MESMA operação atômica.
+        && !exists(eventPath(id,d.lastEventId))
+        && existsAfter(eventPath(id,d.lastEventId))
+        && getAfter(eventPath(id,d.lastEventId)).data.authorUid == request.auth.uid
+        && getAfter(eventPath(id,d.lastEventId)).data.revision == d.revision;
+    }
+    match /pedidos/{orderId} {
+      allow get, list: if member();
+      allow create: if createdOrder(orderId);
+      allow update: if editedOrder(orderId);
+      // Exclusões pelo cliente desabilitadas para preservar o histórico.
+      allow delete: if false;
+
+      // Comentários novos: autor validado pelo perfil e horário pelo servidor.
+      // Compatibilidade com arquivos antigos no Cloud Storage + novos arquivos no Firestore Spark.
+      function filePath(fileId) {
+        return /databases/$(database)/documents/pedidos/$(orderId)/arquivos/$(fileId);
+      }
+      function validAttachment(a,interactionId) {
+        return a is map
+          && a.name is string && a.name.size() > 0 && a.name.size() <= 140
+          && a.type in ['application/pdf','image/jpeg','image/png','image/webp']
+          && a.size is int && a.size > 0
+          && (
+            (a.keys().hasOnly(['name','path','type','size'])
+              && a.keys().hasAll(['name','path','type','size'])
+              && a.size <= 10 * 1024 * 1024
+              && a.path is string && a.path.size() <= 255
+              && a.path.matches('pedidos/' + orderId + '/anexos/' + interactionId + '/[A-Za-z0-9._-]+'))
+            ||
+            (a.keys().hasOnly(['source','id','name','type','size'])
+              && a.keys().hasAll(['source','id','name','type','size'])
+              && a.source == 'firestore'
+              && a.id is string && a.id.matches('[A-Za-z0-9_-]{8,80}')
+              && a.size <= 2 * 1024 * 1024
+              && exists(filePath(a.id))
+              && get(filePath(a.id)).data.authorUid == request.auth.uid
+              && get(filePath(a.id)).data.interactionId == interactionId
+              && get(filePath(a.id)).data.name == a.name
+              && get(filePath(a.id)).data.type == a.type
+              && get(filePath(a.id)).data.size == a.size)
+          );
+      }
+      function validAttachments(a,interactionId) {
+        return a is list && a.size() <= 3
+          && (a.size() < 1 || validAttachment(a[0],interactionId))
+          && (a.size() < 2 || validAttachment(a[1],interactionId))
+          && (a.size() < 3 || validAttachment(a[2],interactionId));
+      }
+      // Metadados de arquivo e blocos de conteúdo: só perfis ativos, sem Storage.
+      match /arquivos/{fileId} {
+        allow get, list: if member();
+        allow create: if member() && exists(orderPath(orderId))
+          && fileId.matches('[A-Za-z0-9_-]{8,80}')
+          && request.resource.data.keys().hasOnly([
+            'authorUid','interactionId','name','type','size','chunks','createdAt'
+          ])
+          && request.resource.data.keys().hasAll([
+            'authorUid','interactionId','name','type','size','chunks','createdAt'
+          ])
+          && request.resource.data.authorUid == request.auth.uid
+          && request.resource.data.interactionId is string
+          && request.resource.data.interactionId.size() > 0
+          && request.resource.data.interactionId.size() <= 100
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.name.size() <= 140
+          && request.resource.data.type in ['application/pdf','image/jpeg','image/png','image/webp']
+          && request.resource.data.size is int
+          && request.resource.data.size > 0
+          && request.resource.data.size <= 2 * 1024 * 1024
+          && request.resource.data.chunks is int
+          && request.resource.data.chunks > 0
+          && request.resource.data.chunks <= 24
+          && request.resource.data.createdAt == request.time;
+        allow update, delete: if false;
+        match /partes/{partId} {
+          allow get, list: if member();
+          allow create: if member()
+            && exists(filePath(fileId))
+            && get(filePath(fileId)).data.authorUid == request.auth.uid
+            && partId.matches('[0-9]{4}')
+            && request.resource.data.keys().hasOnly(['authorUid','index','data'])
+            && request.resource.data.keys().hasAll(['authorUid','index','data'])
+            && request.resource.data.authorUid == request.auth.uid
+            && request.resource.data.index is int
+            && request.resource.data.index >= 0
+            && request.resource.data.index < get(filePath(fileId)).data.chunks
+            && request.resource.data.data is string
+            && request.resource.data.data.size() > 0
+            && request.resource.data.data.size() <= 131072;
+          allow update, delete: if false;
+        }
+      }
+      match /interacoes/{interactionId} {
+        allow get, list: if member();
+        allow create: if member()
+          && exists(orderPath(orderId))
+          && request.resource.data.keys().hasOnly([
+            'tipo','authorUid','authorName','message','attachments','createdAt'
+          ])
+          && request.resource.data.keys().hasAll([
+            'tipo','authorUid','authorName','message','attachments','createdAt'
+          ])
+          && request.resource.data.tipo == 'comentario'
+          && request.resource.data.authorUid == request.auth.uid
+          && request.resource.data.authorName == memberName()
+          && request.resource.data.message is string
+          && request.resource.data.message.size() <= 5000
+          && validAttachments(request.resource.data.attachments,interactionId)
+          && (request.resource.data.message.size() > 0 || request.resource.data.attachments.size() > 0)
+          && request.resource.data.createdAt == request.time;
+        allow update, delete: if false;
+      }
+      // Mudanças de status e de dados: evento obrigatório, imutável,
+      // gravado atomicamente com a alteração do pedido.
+      match /eventos/{eventId} {
+        allow get, list: if member();
+        allow create: if member() && exists(orderPath(orderId))
+          && request.resource.data.keys().hasOnly([
+            'tipo','authorUid','authorName','createdAt','revision',
+            'beforePcp','afterPcp','beforeAssist','afterAssist',
+            'beforePv','afterPv','beforeClient','afterClient',
+            'beforeSalesperson','afterSalesperson','beforeEquipment','afterEquipment'
+          ])
+          && request.resource.data.keys().hasAll([
+            'tipo','authorUid','authorName','createdAt','revision',
+            'beforePcp','afterPcp','beforeAssist','afterAssist',
+            'beforePv','afterPv','beforeClient','afterClient',
+            'beforeSalesperson','afterSalesperson','beforeEquipment','afterEquipment'
+          ])
+          && request.resource.data.tipo == 'alteracao'
+          && request.resource.data.authorUid == request.auth.uid
+          && request.resource.data.authorName == memberName()
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.revision is int
+          && request.resource.data.revision == getAfter(orderPath(orderId)).data.revision
+          && getAfter(orderPath(orderId)).data.lastEventId == eventId
+          && getAfter(orderPath(orderId)).data.updatedByUid == request.auth.uid
+          && getAfter(orderPath(orderId)).data.updatedAtServer == request.time
+          && request.resource.data.beforePcp == get(orderPath(orderId)).data.pcpStatus
+          && request.resource.data.afterPcp == getAfter(orderPath(orderId)).data.pcpStatus
+          && request.resource.data.beforeAssist == get(orderPath(orderId)).data.assistStatus
+          && request.resource.data.afterAssist == getAfter(orderPath(orderId)).data.assistStatus
+          && request.resource.data.beforePv == get(orderPath(orderId)).data.pv
+          && request.resource.data.afterPv == getAfter(orderPath(orderId)).data.pv
+          && request.resource.data.beforeClient == get(orderPath(orderId)).data.client
+          && request.resource.data.afterClient == getAfter(orderPath(orderId)).data.client
+          && request.resource.data.beforeSalesperson == get(orderPath(orderId)).data.salesperson
+          && request.resource.data.afterSalesperson == getAfter(orderPath(orderId)).data.salesperson
+          && request.resource.data.beforeEquipment == get(orderPath(orderId)).data.equipment
+          && request.resource.data.afterEquipment == getAfter(orderPath(orderId)).data.equipment;
+        allow update, delete: if false;
+      }
+    }
+    // Demais coleções não são acessíveis por aplicativos clientes.
+  }
+}
