@@ -1,4 +1,4 @@
-// Regras combinadas: preservam /atendimentos (legado) e protegem /pedidos com login.
+// Regras exclusivas do projeto acompanhamentopcpass: pedidos com login e perfis autorizados.
 // Antes de publicar, compare com as regras atualmente existentes no projeto.
 rules_version = '2';
 service cloud.firestore {
@@ -19,43 +19,6 @@ service cloud.firestore {
     match /usuarios/{uid} {
       allow get: if signedIn() && request.auth.uid == uid;
       allow list, create, update, delete: if false;
-    }
-
-    // LEGADO: Controle de Atendimentos segue usando autenticação anônima.
-    // ATENÇÃO: estes registros NÃO estão protegidos contra visitantes anônimos.
-    function anonymousLegacy() {
-      return signedIn() && request.auth.token.firebase.sign_in_provider == 'anonymous';
-    }
-    function validAttendance(id) {
-      let d = request.resource.data;
-      return d.keys().hasOnly([
-        'id','createdAt','client','company','phone','technician',
-        'equipment','status','reason','checked','notes'
-      ])
-      && d.keys().hasAll([
-        'id','createdAt','client','company','phone','technician',
-        'equipment','status','reason','checked','notes'
-      ])
-      && d.id is string && d.id == id && d.id.size() <= 100 && d.id.size() > 0
-      && d.createdAt is string && d.createdAt.size() <= 64
-      && d.client is string && d.client.size() > 0 && d.client.size() <= 160
-      && d.company is string && d.company.size() > 0 && d.company.size() <= 160
-      && d.phone is string && d.phone.size() > 0 && d.phone.size() <= 40
-      && d.technician in ['João','Ricardo','']
-      && d.equipment is string && d.equipment.size() <= 160
-      && d.status in ['pendente','resolvido','nao_resolvido']
-      && d.reason in [
-        '', 'Manutenção eletrônica', 'Manutenção mecânica',
-        'Falta de itens', 'Itens incorretos', 'Cartucho Vencido',
-        'Cartucho Avariado', 'Procedimentos incorretos',
-        'Sem continuidade do atendimento'
-      ]
-      && d.checked is bool
-      && d.notes is string && d.notes.size() <= 10000;
-    }
-    match /atendimentos/{attendanceId} {
-      allow read, delete: if anonymousLegacy();
-      allow create, update: if anonymousLegacy() && validAttendance(attendanceId);
     }
 
     // Acesso aos pedidos só por conta com perfil ativo, definido pelo administrador.

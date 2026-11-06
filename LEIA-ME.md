@@ -1,37 +1,24 @@
-# Acompanhamento de Pedidos — V4 · Login + histórico + anexos grátis no Firestore
+# Acompanhamento de Pedidos — PCP e Assistência | V4 para Firebase independente
 
-Projeto Firebase: `controle-atendimentos-sat`. GitHub Pages e Firebase Authentication (E-mail/Senha) continuam iguais.
+Projeto **acompanhamentopcpass**. Estes arquivos já foram configurados para seu projeto novo; não usam o projeto SAT.
 
-## O que mudou nesta versão
+## Ordem de implantação (projeto novo)
 
-- **Anexos no Firestore Spark** em vez de Cloud Storage: até 3 arquivos de até 2 MB por interação, JPG, PNG, WEBP ou PDF.
-- Arquivos divididos em documentos de 96 KiB (convertidos para Base64). O limite técnico de 1 MiB por documento é respeitado.
-- Para cada anexo: **Abrir** (nova aba) e **Baixar** dentro dos detalhes do PV. Disponível em diferentes dispositivos após login, sem depender do computador original.
-- Comentários, auditoria das mudanças de status PCP/Assistência e nome do autor continuam no Firestore. Nome e data/hora vêm do Firebase, não do usuário.
-- Anexos da versão anterior que foram de fato enviados ao Cloud Storage continuam legíveis *se o bucket e suas permissões estiverem disponíveis*. Novos anexos não usam Cloud Storage.
+1. Firebase > Firestore Database > Criar banco de dados > edição Standard (se aparecer) > (default) > região desejada > iniciar em modo de produção. **Não use modo de teste**.
+2. Firebase > Authentication > Sign-in method > ativar **Email/Password (E-mail/Senha)**. O método Anônimo não é necessário aqui.
+3. Firebase > Authentication > Users > Add user: criar uma conta por pessoa. Guarde o UID de cada conta. Nunca coloque senhas nos arquivos ou no GitHub.
+4. Firebase > Firestore Database > Data > Criar coleção `usuarios`. Criar um documento com ID exatamente igual ao UID de cada funcionário e campos `nome` (string, por exemplo João), `ativo` (boolean true) e `papel` (string, por exemplo PCP ou Assistência). Perfis não são autocriados pelo site.
+5. Firebase > Firestore Database > Rules: copie **todo** o conteúdo do `firestore.rules` deste pacote e publique. Ele é exclusivo deste projeto, sem liberação do painel SAT. Não use `allow read, write: if true`.
+6. GitHub: criar repositório separado `acompanhamento-pedidos` com visibilidade Public (requisito usual do GitHub Pages gratuito). Enviar os arquivos `index.html`, `app.js`, `firebase-config.js`, `.nojekyll` na raiz. Não há credenciais secretas nesse arquivo de configuração.
+7. GitHub > Settings > Pages > Deploy from a branch > main > /(root) > Save. Abrir o link após a publicação.
+8. Testar com **dados fictícios**: fazer login, cadastrar PV, alterar status PCP e Assistência, registrar comentário e anexo pequeno, testar Abrir/Baixar em outra sessão autorizada; confirmar autoria e datas no histórico.
 
-## Como atualizar
+## Como funciona
 
-1. No GitHub Pages **do painel de pedidos** (não no painel de atendimentos), substitua `index.html` e `app.js` pelos arquivos desta V4. Preserve `firebase-config.js`.
-2. No Firebase → Firestore Database → **Rules**, faça cópia das regras atuais. Publique o `firestore.rules` deste pacote **somente depois de comparar e preservar eventuais alterações posteriores**. Ele inclui a coleção de atendimentos e as regras de login/perfil do painel de pedidos.
-3. Firebase → Authentication → Sign-in method → **E-mail/Senha** habilitado. Crie contas autorizadas e perfis em `usuarios/{uid}`, campos `nome` (string), `ativo` (boolean=true) e `papel` (string). O sistema **não** possui cadastro público.
-4. No GitHub, Settings → Pages → main → /(root). Em site já publicado, atualize com Ctrl+F5.
-5. Teste com PV fictício: faça login, envie imagem menor que 2 MB, depois clique **Abrir** e **Baixar**. Teste em outro computador com outra conta autorizada.
-
-### Segurança e limites
-
-- O Firestore Spark oferece uma cota gratuita de 1 GiB armazenado, 50 mil leituras e 20 mil gravações por dia e 10 GiB de saída por mês (cota compartilhada com os registros normais). **Cada arquivo consome mais que seu tamanho original**, por conta da codificação Base64 e índices. Não é armazenamento ilimitado: após esgotar a cota, as operações podem parar de funcionar.
-- Este recurso é apropriado para **anexos pequenos e uso interno moderado**. Não substitui um serviço dedicado de arquivos se os anexos crescerem. Se superar 2 MB, reduza o tamanho antes do envio.
-- Os arquivos são publicados somente após terminar o envio de todos os blocos. Se um envio falhar, podem sobrar documentos parciais; o administrador deve excluí-los manualmente no console. Não há limpeza automática.
-- A segurança depende das regras Firestore: só contas com `usuarios/{uid}.ativo=true` podem ler/criar arquivos. E-mails/senhas não ficam no GitHub.
-- Os anexos não são criptografados ponta a ponta, e pessoas com acesso administrativo ao projeto podem lê-los. Não abra PDFs ou imagens não confiáveis.
-- **Limite por upload:** até 3 anexos e 2 MB por arquivo; até 24 fragmentos por arquivo. Não há antivírus, retenção automática nem recurso de exclusão de anexos pela interface.
-- Os registros do Controle de Atendimentos antigo, na coleção `atendimentos`, continuam usando acesso anônimo: essa parte permanece sem restrição pessoal se não for migrada.
-
-## Observação sobre o plano Blaze
-
-Cloud Storage para Firebase requer Blaze desde fevereiro de 2026. Esta V4 **não usa Cloud Storage para os novos anexos**; por isso, pode utilizar a cota grátis do Firestore Spark sem cadastrar faturamento. O limite de documentos do Firestore é de 1 MiB, por isso é necessário fragmentar o conteúdo.
-
-## Status de validação
-
-O código foi atualizado no pacote e passou por verificações estáticas de consistência e sintaxe. Ainda é necessário publicar as regras, habilitar as contas no projeto real e executar o teste de ponta a ponta em sua conta Firebase. Não houve publicação automática.
+- Autenticação por email/senha e perfis pré-autorizados na coleção `/usuarios/{uid}`. O nome é obtido desse documento e associado a interações e alterações.
+- Pedidos em `/pedidos`; eventos de alteração em `/pedidos/{id}/eventos`; comentários em `/pedidos/{id}/interacoes`; anexos em blocos pequenos em `/pedidos/{id}/arquivos`.
+- Anexos: JPG, PNG, WEBP ou PDF, no máximo 3 por interação, até 2 MiB por arquivo. Botões Abrir e Baixar. Usa quota do **Firestore Spark**, não o Cloud Storage para novos arquivos.
+- Plano gratuito tem cotas limitadas; arquivos em Base64 ocupam mais espaço e demandam diversas operações. Não há antivírus, limpeza automática de uploads parciais ou hospedagem privada no GitHub Pages gratuito.
+- As regras limitam operações a perfis ativos, mas administradores do Firebase podem alterar o banco. Usuários autorizados podem ler todos os pedidos/anexos, sem segregação PCP vs Assistência.
+- Neste projeto novo, não habilite autenticação anônima ou regras de acesso anônimo do SAT.
+- A UI foi verificada anteriormente com simulação local; **a conexão real com este projeto novo ainda depende das configurações acima e deve ser testada.**

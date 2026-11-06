@@ -1,10 +1,10 @@
-// Configuração pública do aplicativo Web Firebase fornecida pelo proprietário do projeto.
-// Segurança depende das regras do Firestore/Storage, nunca do sigilo destes campos.
+// Aplicativo Web Firebase: acompanhamento de pedidos PCP e Assistência.
+// Esta configuração identifica o projeto; a segurança está nas regras do Firestore.
 export const firebaseConfig = {
-  apiKey: "AIzaSyCOu6-jyf3cFgrQTOaVdQY6m9HQau6vQKM",
-  authDomain: "controle-atendimentos-sat.firebaseapp.com",
-  projectId: "controle-atendimentos-sat",
-  storageBucket: "controle-atendimentos-sat.firebasestorage.app",
-  messagingSenderId: "308902408196",
-  appId: "1:308902408196:web:c5b6c44e8978e640648551"
+  apiKey: "AIzaSyBL_zdwxcfi8iZ0Bm7YbTVIzZSR8xmGGIc",
+  authDomain: "acompanhamentopcpass.firebaseapp.com",
+  projectId: "acompanhamentopcpass",
+  storageBucket: "acompanhamentopcpass.firebasestorage.app",
+  messagingSenderId: "241583946095",
+  appId: "1:241583946095:web:d7b99c810c9ffbdf6d909a"
 };

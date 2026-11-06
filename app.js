@@ -13,9 +13,8 @@ import {
 } from 'https://www.gstatic.com/firebasejs/13.2.0/firebase-storage.js';
 import { firebaseConfig } from './firebase-config.js';
 
-// App nomeado: evita sobrescrever a sessão anônima do painel de atendimentos
-// caso ambos os sites compartilhem o domínio username.github.io.
-const app=initializeApp(firebaseConfig,'pedidosSAT'),auth=getAuth(app),db=getFirestore(app),storage=getStorage(app);
+// App nomeado e isolado do painel SAT, em projeto Firebase exclusivo.
+const app=initializeApp(firebaseConfig,'pedidosPCPASS'),auth=getAuth(app),db=getFirestore(app),storage=getStorage(app);
 const $=id=>document.getElementById(id);
 const label={pendente:'Pendente',confirmado:'Confirmado',recusado:'Recusado'};
 const states=['pendente','confirmado','recusado'];
@@ -301,6 +300,6 @@ function exportPdf(){let s;try{s=statsFor(inRange());}catch(e){return toast(erro
  rect(0,0,1240,1754,bg);rect(0,0,1240,180,ink);rect(64,36,8,110,orange);txt('CONTROLE INTERNO · PCP & ASSISTÊNCIA',98,70,18,'#ffbe83',true);txt('Indicadores de Pedidos',98,126,51,'white',true);txt('Relatório de acompanhamento',99,160,23,'#dbe6ed');card(65,210,1110,110);txt('PERÍODO',93,249,18,muted,true);txt(($('dateFrom').value||'início')+' até '+($('dateTo').value||'hoje'),93,290,27,ink,true);
  const metrics=[['PEDIDOS',s.total,ink],['PCP CONFIRMADOS',s.pcp.confirmado,'#197f61'],['ASSISTÊNCIA',s.assist.confirmado,'#197f61'],['AMBOS',s.both,orange]];metrics.forEach(([name,n,color],i)=>{const px=65+i*282;card(px,350,264,167);rect(px+20,372,8,122,color);txt(name,px+40,392,16,muted,true);txt(n,px+42,471,68,color,true);});
  [['PCP',s.pcp,557],['ASSISTÊNCIA TÉCNICA',s.assist,982]].forEach(([name,v,py])=>{card(65,py,1110,372);txt('STATUS '+name,94,py+50,31,ink,true);bar(94,py+125,'Confirmado',v.confirmado,s.total,'#197f61');bar(94,py+207,'Recusado',v.recusado,s.total,'#aa4350');bar(94,py+289,'Pendente',v.pendente,s.total,orange);});
- card(65,1400,1110,165);txt('CONFIRMADOS PELOS DOIS SETORES',94,1456,28,ink,true);txt(s.both+' pedidos ('+percent(s.both,s.total)+'%)',94,1518,38,'#197f61',true);txt('Gerado em '+prettyTime(new Date()),66,1658,19,muted);txt('Acompanhamento de Pedidos | SAT',66,1690,18,muted);
+ card(65,1400,1110,165);txt('CONFIRMADOS PELOS DOIS SETORES',94,1456,28,ink,true);txt(s.both+' pedidos ('+percent(s.both,s.total)+'%)',94,1518,38,'#197f61',true);txt('Gerado em '+prettyTime(new Date()),66,1658,19,muted);txt('Acompanhamento de Pedidos | PCP e Assistência',66,1690,18,muted);
  download('indicadores_pedidos_'+($('dateFrom').value||'inicio')+'_'+($('dateTo').value||'fim')+'.pdf',canvasPdf(c));toast('PDF exportado com os indicadores do período.');}
 $('pdfBtn').addEventListener('click',exportPdf);
