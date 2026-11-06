@@ -1,24 +1,34 @@
-# Acompanhamento de Pedidos — PCP e Assistência | V4 para Firebase independente
+# Acompanhamento de Pedidos — V5 | Permissões por Setor
 
-Projeto **acompanhamentopcpass**. Estes arquivos já foram configurados para seu projeto novo; não usam o projeto SAT.
+Projeto Firebase: **acompanhamentopcpass**. Preserva todas as funcionalidades da V4, inclusive o login, comentários, anexos em blocos no Firestore, histórico de mudanças, filtros, dashboard e PDF.
 
-## Ordem de implantação (projeto novo)
+## Regra de negócio
 
-1. Firebase > Firestore Database > Criar banco de dados > edição Standard (se aparecer) > (default) > região desejada > iniciar em modo de produção. **Não use modo de teste**.
-2. Firebase > Authentication > Sign-in method > ativar **Email/Password (E-mail/Senha)**. O método Anônimo não é necessário aqui.
-3. Firebase > Authentication > Users > Add user: criar uma conta por pessoa. Guarde o UID de cada conta. Nunca coloque senhas nos arquivos ou no GitHub.
-4. Firebase > Firestore Database > Data > Criar coleção `usuarios`. Criar um documento com ID exatamente igual ao UID de cada funcionário e campos `nome` (string, por exemplo João), `ativo` (boolean true) e `papel` (string, por exemplo PCP ou Assistência). Perfis não são autocriados pelo site.
-5. Firebase > Firestore Database > Rules: copie **todo** o conteúdo do `firestore.rules` deste pacote e publique. Ele é exclusivo deste projeto, sem liberação do painel SAT. Não use `allow read, write: if true`.
-6. GitHub: criar repositório separado `acompanhamento-pedidos` com visibilidade Public (requisito usual do GitHub Pages gratuito). Enviar os arquivos `index.html`, `app.js`, `firebase-config.js`, `.nojekyll` na raiz. Não há credenciais secretas nesse arquivo de configuração.
-7. GitHub > Settings > Pages > Deploy from a branch > main > /(root) > Save. Abrir o link após a publicação.
-8. Testar com **dados fictícios**: fazer login, cadastrar PV, alterar status PCP e Assistência, registrar comentário e anexo pequeno, testar Abrir/Baixar em outra sessão autorizada; confirmar autoria e datas no histórico.
+- Usuários com `/usuarios/{UID}.papel = "PCP"` podem editar **somente Status PCP**.
+- Usuários com `/usuarios/{UID}.papel = "Assistência"` ou `"Assistência Técnica"` podem editar **somente Status Assistência**.
+- Ambos podem visualizar os dois status, cadastrar pedidos, editar os dados gerais do PV e registrar comentários/anexos. O histórico continua sendo gerado automaticamente.
+- Usuários ativos com `papel` diferente destes podem ler e comentar, mas não conseguem editar nenhum status.
+- A permissão é verificada no **Firestore**, não apenas na interface. Não conceda a usuários acesso administrativo ao console Firebase, pois as regras de cliente não restringem administradores.
 
-## Como funciona
+## Publicação / atualização (sem apagar pedidos)
 
-- Autenticação por email/senha e perfis pré-autorizados na coleção `/usuarios/{uid}`. O nome é obtido desse documento e associado a interações e alterações.
-- Pedidos em `/pedidos`; eventos de alteração em `/pedidos/{id}/eventos`; comentários em `/pedidos/{id}/interacoes`; anexos em blocos pequenos em `/pedidos/{id}/arquivos`.
-- Anexos: JPG, PNG, WEBP ou PDF, no máximo 3 por interação, até 2 MiB por arquivo. Botões Abrir e Baixar. Usa quota do **Firestore Spark**, não o Cloud Storage para novos arquivos.
-- Plano gratuito tem cotas limitadas; arquivos em Base64 ocupam mais espaço e demandam diversas operações. Não há antivírus, limpeza automática de uploads parciais ou hospedagem privada no GitHub Pages gratuito.
-- As regras limitam operações a perfis ativos, mas administradores do Firebase podem alterar o banco. Usuários autorizados podem ler todos os pedidos/anexos, sem segregação PCP vs Assistência.
-- Neste projeto novo, não habilite autenticação anônima ou regras de acesso anônimo do SAT.
-- A UI foi verificada anteriormente com simulação local; **a conexão real com este projeto novo ainda depende das configurações acima e deve ser testada.**
+1. No Firebase Console > Firestore Database > **Dados** > `usuarios` > abra o documento de cada funcionário (identificado pelo UID do Authentication). Confirme o campo `papel` com **um dos valores exatos acima**, tipo **string**. Não altere `nome` ou `ativo`. Faça isso para todos os funcionários antes de publicar as novas regras.
+2. Firestore Database > **Regras**: faça backup das regras atuais. Cole **TODO** o conteúdo de `firestore.rules` deste pacote e clique em **Publicar**. Este projeto é independente do SAT.
+3. No repositório GitHub do Acompanhamento de Pedidos, substitua os arquivos **`index.html`** e **`app.js`** pelos desta V5, na raiz do repositório. `firebase-config.js` e `.nojekyll` não precisam mudar.
+4. Em GitHub > Settings > Pages, a publicação por branch `main`, pasta `/(root)`, continua igual. Aguarde a conclusão da implantação; atualize a página com Ctrl+F5.
+5. Verifique com duas contas (uma PCP, outra Assistência), alterando os status autorizados e garantindo que o outro status é apenas visualização. Confira o registro automático no histórico.
+
+**Atenção:** publicar o `app.js` sem as regras novas deixa a proteção apenas visual. Publicar as regras novas antes de atualizar o `app.js` pode causar erro de permissão no aplicativo antigo, pois ele tentará atualizar status dos dois setores. Atualize ambos numa mesma janela de manutenção; prefira publicar as regras e os arquivos sem usuários alterando pedidos durante a troca.
+
+**Arquivos para GitHub:** `index.html`, `app.js`, `firebase-config.js` e `.nojekyll`.
+**Somente no Firebase:** `firestore.rules`.
+
+## Estrutura Firestore
+
+- `usuarios/{UID}`: `nome` (string), `ativo` (boolean), `papel` (string)
+- `pedidos/{ID}`: PV e status independentes
+- `pedidos/{ID}/eventos`: histórico de alterações
+- `pedidos/{ID}/interacoes`: comentários com autoria
+- `pedidos/{ID}/arquivos`: anexos até 2 MiB/arquivo em blocos Firestore
+
+Este projeto não depende de Storage/Blaze para novos anexos. As cotas Spark são limitadas.

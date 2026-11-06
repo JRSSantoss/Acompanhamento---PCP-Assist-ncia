@@ -38,6 +38,24 @@ function showLogin(message='Entre para acessar os pedidos.'){clearSubscriptions(
 function clearSubscriptions(){if(unsubscribeRecords){unsubscribeRecords();unsubscribeRecords=null;}stopHistory();if($('detailsDialog').open)$('detailsDialog').close();records=[];activeId=null;}
 function stopHistory(){if(unsubscribeComments){unsubscribeComments();unsubscribeComments=null;}if(unsubscribeEvents){unsubscribeEvents();unsubscribeEvents=null;}historyComments=[];historyEvents=[];}
 function isEnabledProfile(d){return !!d&&d.ativo===true&&typeof d.nome==='string'&&d.nome.trim().length>0;}
+// Perfil é definido pelo administrador no documento /usuarios/{uid}, nunca escolhido pelo usuário.
+// Valores aceitos para o campo papel: 'PCP', 'Assistência' ou 'Assistência Técnica'.
+function sector(){
+  const role=clean(profile?.role);
+  if(role==='PCP')return 'PCP';
+  if(role==='Assistência'||role==='Assistência Técnica')return 'Assistência';
+  return '';
+}
+function canEditStatus(field){
+  return (field==='pcpStatus'&&sector()==='PCP') ||
+         (field==='assistStatus'&&sector()==='Assistência');
+}
+function sectorNotice(){
+  const s=sector();
+  return s==='PCP'?'Seu perfil pode alterar somente o status PCP.':
+    s==='Assistência'?'Seu perfil pode alterar somente o status Assistência.':
+    'Seu perfil não tem autorização para alterar os status PCP e Assistência. Confira o campo papel no Firebase.';
+}
 
 // Credenciais são geridas exclusivamente no console Firebase. O usuário nunca escolhe
 // o próprio nome no cliente: ele é lido de /usuarios/{uid}, protegido por rules.
@@ -50,8 +68,8 @@ onAuthStateChanged(auth,async user=>{
     if(!profileSnap.exists()||!isEnabledProfile(profileSnap.data())){
       await signOut(auth);showLogin('Sua conta ainda não foi autorizada. Peça ao administrador para criar /usuarios/'+user.uid+' com nome e ativo=true.');return;
     }
-    currentUser=user;profile={nome:clean(profileSnap.data().nome),role:profileSnap.data().papel||'colaborador'};
-    $('userName').textContent=profile.nome;$('userEmail').textContent=user.email||'';
+    currentUser=user;profile={nome:clean(profileSnap.data().nome),role:clean(profileSnap.data().papel)};
+    $('userName').textContent=profile.nome;$('userEmail').textContent=user.email||'';$('userSector').textContent=sector()||'Sem setor definido';
     $('userInitial').textContent=profile.nome.trim().charAt(0).toUpperCase();$('userChip').classList.remove('hidden');
     $('loginView').classList.add('hidden');$('appView').classList.remove('hidden');notice('Conectado. Os pedidos estão sincronizados com o Firestore.','ready');
     subscribeOrders();
@@ -75,7 +93,13 @@ function subscribeOrders(){
   },e=>{notice('Erro de sincronização: '+errors(e),'error');toast(errors(e),true);});
 }
 function statusHTML(s){return `<span class="pill ${states.includes(s)?s:'pendente'}">${label[s]||'Pendente'}</span>`;}
-function selectHTML(id,field,value){return `<select class="status" aria-label="Alterar ${field==='pcpStatus'?'status PCP':'status Assistência'}" data-id="${escapeHTML(id)}" data-field="${field}" data-value="${escapeHTML(value)}">${states.map(s=>`<option value="${s}" ${value===s?'selected':''}>${label[s]}</option>`).join('')}</select>`;}
+function selectHTML(id,field,value){
+  if(!canEditStatus(field)){
+    // Outro setor pode visualizar normalmente, mas não vê um editor de status.
+    return `<span class="pill ${states.includes(value)?value:'pendente'}" title="Somente o setor ${field==='pcpStatus'?'PCP':'Assistência'} pode alterar este status">${label[value]||'Pendente'}</span>`;
+  }
+  return `<select class="status" aria-label="Alterar ${field==='pcpStatus'?'status PCP':'status Assistência'}" data-id="${escapeHTML(id)}" data-field="${field}" data-value="${escapeHTML(value)}">${states.map(s=>`<option value="${s}" ${value===s?'selected':''}>${label[s]}</option>`).join('')}</select>`;
+}
 function filteredOrders(){const search=clean($('search').value).toLowerCase(),pcp=$('pcpFilter').value,ass=$('assistFilter').value;return records.filter(r=>(pcp==='todos'||pcp===r.pcpStatus)&&(ass==='todos'||ass===r.assistStatus)&&[r.pv,r.client,r.salesperson,r.equipment].some(v=>String(v||'').toLowerCase().includes(search)));}
 function renderTable(){const r=filteredOrders();$('recordCount').textContent=r.length+' de '+records.length; $('recordsBody').innerHTML=r.length?r.map(v=>`<tr tabindex="0" data-open="${escapeHTML(v.id)}"><td>${escapeHTML(prettyTime(v.createdAt))}</td><td><span class="pv">${escapeHTML(v.pv)}</span></td><td><span class="client">${escapeHTML(v.client)}</span></td><td>${escapeHTML(v.salesperson)}</td><td>${escapeHTML(v.equipment)}</td><td>${selectHTML(v.id,'pcpStatus',v.pcpStatus)}</td><td>${selectHTML(v.id,'assistStatus',v.assistStatus)}</td><td><button class="btn btn-sm detail-btn" type="button" data-id="${escapeHTML(v.id)}">Detalhes</button></td></tr>`).join(''):'<tr><td colspan="8" class="empty">Nenhum pedido corresponde aos filtros selecionados.</td></tr>';}
 $('search').addEventListener('input',renderTable);$('pcpFilter').addEventListener('change',renderTable);$('assistFilter').addEventListener('change',renderTable);
@@ -84,6 +108,7 @@ $('recordsBody').addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' '
 $('recordsBody').addEventListener('change',async e=>{
   const select=e.target.closest('select[data-field]');if(!select)return;
   const old=records.find(r=>r.id===select.dataset.id)?.[select.dataset.field];if(!old)return;
+  if(!canEditStatus(select.dataset.field)){select.value=old;toast('Você não tem permissão para alterar o status deste setor.',true);return;}
   select.disabled=true;try{await updateOrder(select.dataset.id,{[select.dataset.field]:select.value});toast('Alteração de status registrada no histórico.');}
   catch(err){select.value=old;toast(errors(err),true);}finally{select.disabled=false;}
 });
@@ -113,6 +138,9 @@ async function updateOrder(orderId,patch){
     const snap=await tx.get(orderRef);if(!snap.exists())throw Error('Pedido não encontrado.');
     const before=snap.data(),after={...before,...patch};
     const changed=auditFields.filter(f=>String(before[f]??'')!==String(after[f]??''));
+    // Verificação no aplicativo; as mesmas restrições são obrigatórias nas regras do Firestore.
+    if(changed.includes('pcpStatus')&&!canEditStatus('pcpStatus'))throw Error('Somente o PCP pode alterar o status PCP.');
+    if(changed.includes('assistStatus')&&!canEditStatus('assistStatus'))throw Error('Somente a Assistência pode alterar o status Assistência.');
     if(!changed.length)return false;
     const revision=Number(before.revision||0)+1;
     tx.update(orderRef,{...patch,updatedAt:nowISO(),updatedAtServer:serverTimestamp(),updatedByUid:currentUser.uid,updatedByName:profile.nome,revision,lastEventId:eventRef.id});
@@ -133,13 +161,19 @@ function updateModalData(r){$('modalPV').textContent=r.pv;$('createdTime').textC
  // Não sobrescreve alterações ainda não salvas quando o usuário está digitando.
  if(!document.activeElement?.closest('#editForm'))for(const [id,val]of Object.entries(values))$(id).value=val;
  else if(!$('editPV').value){for(const [id,val]of Object.entries(values))$(id).value=val;}
+ $('editPCP').disabled=!canEditStatus('pcpStatus');
+ $('editAssist').disabled=!canEditStatus('assistStatus');
+ $('statusAccessNote').textContent=sectorNotice();
  $('legacyNote').textContent=r.observations?'Observações herdadas da versão anterior: '+r.observations:'';$('legacyNote').classList.toggle('hidden',!r.observations);
 }
 function closeDetails(){if($('detailsDialog').open)$('detailsDialog').close();stopHistory();activeId=null;}
 $('closeDialog').addEventListener('click',closeDetails);$('closeDialogTop').addEventListener('click',closeDetails);$('detailsDialog').addEventListener('close',()=>{stopHistory();activeId=null;});
 $('editForm').addEventListener('submit',async e=>{
  e.preventDefault();if(!activeId)return;
- const r={pv:clean($('editPV').value),client:clean($('editClient').value),salesperson:clean($('editSales').value),equipment:clean($('editEquipment').value),pcpStatus:$('editPCP').value,assistStatus:$('editAssist').value};
+ const r={pv:clean($('editPV').value),client:clean($('editClient').value),salesperson:clean($('editSales').value),equipment:clean($('editEquipment').value)};
+ // Não incluir o status do outro setor nem reenviar valor antigo em uma edição concorrente.
+ if(canEditStatus('pcpStatus'))r.pcpStatus=$('editPCP').value;
+ if(canEditStatus('assistStatus'))r.assistStatus=$('editAssist').value;
  if([r.pv,r.client,r.salesperson,r.equipment].some(x=>!x))return toast('Preencha todos os campos obrigatórios.',true);
  if(duplicatePV(r.pv,activeId))return toast('Este PV já pertence a outro pedido.',true);
  $('saveOrderBtn').disabled=true;try{const changed=await updateOrder(activeId,r);toast(changed?'Alterações registradas com autor e horário.':'Nenhuma alteração realizada.');}
