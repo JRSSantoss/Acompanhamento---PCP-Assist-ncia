@@ -18,7 +18,7 @@ const app=initializeApp(firebaseConfig,'pedidosPCPASS'),auth=getAuth(app),db=get
 const $=id=>document.getElementById(id);
 const label={pendente:'Pendente',confirmado:'Confirmado',recusado:'Recusado'};
 const states=['pendente','confirmado','recusado'];
-const fieldNames={pv:'PV',client:'Cliente',salesperson:'Vendedor',equipment:'Equipamento'};
+const fieldNames={pv:'PV',client:'Cliente',salesperson:'Vendedor',equipment:'Equipamento',agreedDate:'Prazo combinado'};
 const fileTypes=new Set(['application/pdf','image/jpeg','image/png','image/webp']);
 const MAX_SIZE=2*1024*1024,MAX_FILES=3,CHUNK_SIZE=96*1024; // Spark: aprox. 128 KiB base64 por documento
 let currentUser=null,profile=null,records=[],activeId=null,historyComments=[],historyEvents=[];
@@ -31,6 +31,10 @@ function nowISO(){return new Date().toISOString();}
 function localDay(value){const d=new Date(value);if(Number.isNaN(d.valueOf()))return '';return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function dateValue(v){if(!v)return '';if(typeof v?.toDate==='function')return v.toDate().toISOString();return String(v);}
 function prettyTime(v){const d=new Date(dateValue(v));return Number.isNaN(d.valueOf())?'—':d.toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'});}
+function displayDate(v){if(!v||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(v))return 'Não definida';const [year,month,day]=v.split('-');return day+'/'+month+'/'+year;}
+function activeOrders(){return records.filter(r=>r.deleted!==true);}
+function isDeleted(r){return r?.deleted===true;}
+
 function errors(e){if(e?.code==='auth/invalid-credential')return 'E-mail ou senha incorretos.';if(e?.code==='auth/too-many-requests')return 'Muitas tentativas. Tente novamente mais tarde.';if(e?.code==='permission-denied'||e?.code==='storage/unauthorized')return 'Permissão negada. Verifique seu perfil de acesso e as regras no Firebase.';if(e?.code==='storage/bucket-not-found'||e?.code==='storage/unauthenticated')return 'Cloud Storage indisponível. Verifique o bucket, o plano Blaze e o login.';return e?.message||String(e);}
 function notice(message,type='info'){$('systemNoticeText').textContent=message;$('systemNotice').className='banner'+(type==='error'?' error':type==='ready'?' ready':'');}
 function toast(message,isError=false){const n=$('toast');n.textContent=message;n.className='toast'+(isError?' error':'');clearTimeout(nextMessageTimer);nextMessageTimer=setTimeout(()=>n.classList.add('hidden'),5500);}
@@ -87,9 +91,9 @@ function subscribeOrders(){
   if(unsubscribeRecords)unsubscribeRecords();
   unsubscribeRecords=onSnapshot(collection(db,'pedidos'),snap=>{
     records=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(dateValue(b.createdAt)||'').localeCompare(dateValue(a.createdAt)||''));
-    renderTable();renderDashboard();
+    renderTable();renderDashboard();renderLogs();
     if(activeId){const r=records.find(x=>x.id===activeId);if(r)updateModalData(r);else closeDetails();}
-    notice('Firebase conectado · '+records.length+' pedido(s) disponível(is).','ready');
+    notice('Firebase conectado · '+activeOrders().length+' pedido(s) ativo(s).','ready');
   },e=>{notice('Erro de sincronização: '+errors(e),'error');toast(errors(e),true);});
 }
 function statusHTML(s){return `<span class="pill ${states.includes(s)?s:'pendente'}">${label[s]||'Pendente'}</span>`;}
@@ -100,10 +104,21 @@ function selectHTML(id,field,value){
   }
   return `<select class="status" aria-label="Alterar ${field==='pcpStatus'?'status PCP':'status Assistência'}" data-id="${escapeHTML(id)}" data-field="${field}" data-value="${escapeHTML(value)}">${states.map(s=>`<option value="${s}" ${value===s?'selected':''}>${label[s]}</option>`).join('')}</select>`;
 }
-function filteredOrders(){const search=clean($('search').value).toLowerCase(),pcp=$('pcpFilter').value,ass=$('assistFilter').value;return records.filter(r=>(pcp==='todos'||pcp===r.pcpStatus)&&(ass==='todos'||ass===r.assistStatus)&&[r.pv,r.client,r.salesperson,r.equipment].some(v=>String(v||'').toLowerCase().includes(search)));}
-function renderTable(){const r=filteredOrders();$('recordCount').textContent=r.length+' de '+records.length; $('recordsBody').innerHTML=r.length?r.map(v=>`<tr tabindex="0" data-open="${escapeHTML(v.id)}"><td>${escapeHTML(prettyTime(v.createdAt))}</td><td><span class="pv">${escapeHTML(v.pv)}</span></td><td><span class="client">${escapeHTML(v.client)}</span></td><td>${escapeHTML(v.salesperson)}</td><td>${escapeHTML(v.equipment)}</td><td>${selectHTML(v.id,'pcpStatus',v.pcpStatus)}</td><td>${selectHTML(v.id,'assistStatus',v.assistStatus)}</td><td><button class="btn btn-sm detail-btn" type="button" data-id="${escapeHTML(v.id)}">Detalhes</button></td></tr>`).join(''):'<tr><td colspan="8" class="empty">Nenhum pedido corresponde aos filtros selecionados.</td></tr>';}
+function filteredOrders(){const search=clean($('search').value).toLowerCase(),pcp=$('pcpFilter').value,ass=$('assistFilter').value;return activeOrders().filter(r=>(pcp==='todos'||pcp===r.pcpStatus)&&(ass==='todos'||ass===r.assistStatus)&&[r.pv,r.client,r.salesperson,r.equipment].some(v=>String(v||'').toLowerCase().includes(search)));}
+function renderTable(){
+ const r=filteredOrders();$('recordCount').textContent=r.length+' de '+activeOrders().length;
+ $('recordsBody').innerHTML=r.length?r.map(v=>`<tr tabindex="0" data-open="${escapeHTML(v.id)}">
+ <td>${escapeHTML(prettyTime(v.createdAt))}</td><td><span class="pv">${escapeHTML(v.pv)}</span></td><td><span class="client">${escapeHTML(v.client)}</span></td>
+ <td>${escapeHTML(v.salesperson)}</td><td>${escapeHTML(v.equipment)}</td><td><span class="deadline ${v.agreedDate?'':'not-set'}">${escapeHTML(displayDate(v.agreedDate))}</span></td>
+ <td>${selectHTML(v.id,'pcpStatus',v.pcpStatus)}</td><td>${selectHTML(v.id,'assistStatus',v.assistStatus)}</td>
+ <td class="actions-cell"><div class="button-row"><button class="btn btn-sm detail-btn" type="button" data-id="${escapeHTML(v.id)}">Detalhes</button><button class="btn btn-sm btn-outline-danger" type="button" data-delete="${escapeHTML(v.id)}" aria-label="Excluir pedido ${escapeHTML(v.pv)} da lista">Excluir</button></div></td></tr>`).join(''):'<tr><td colspan="9" class="empty">Nenhum pedido corresponde aos filtros selecionados.</td></tr>';
+}
 $('search').addEventListener('input',renderTable);$('pcpFilter').addEventListener('change',renderTable);$('assistFilter').addEventListener('change',renderTable);
-$('recordsBody').addEventListener('click',e=>{if(e.target.closest('select'))return;const tr=e.target.closest('tr[data-open]');if(tr)openDetails(tr.dataset.open);});
+$('recordsBody').addEventListener('click',e=>{
+ const del=e.target.closest('button[data-delete]');if(del){e.stopPropagation();confirmDelete(del.dataset.delete);return;}
+ if(e.target.closest('select'))return;
+ const tr=e.target.closest('tr[data-open]');if(tr)openDetails(tr.dataset.open);
+});
 $('recordsBody').addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.tagName==='TR'){e.preventDefault();openDetails(e.target.dataset.open);}});
 $('recordsBody').addEventListener('change',async e=>{
   const select=e.target.closest('select[data-field]');if(!select)return;
@@ -113,29 +128,50 @@ $('recordsBody').addEventListener('change',async e=>{
   catch(err){select.value=old;toast(errors(err),true);}finally{select.disabled=false;}
 });
 
+async function confirmDelete(orderId){
+ const order=records.find(r=>r.id===orderId);if(!order||isDeleted(order))return;
+ if(!window.confirm(`Excluir o pedido ${order.pv} (${order.client}) da lista ativa?\n\nEle ficará preservado na aba Registros, com nome e horário da exclusão. Essa ação não poderá ser desfeita pela interface.`))return;
+ const btn=document.querySelector(`button[data-delete="${CSS.escape(orderId)}"]`);if(btn)btn.disabled=true;
+ try{
+  const orderRef=doc(db,'pedidos',orderId),eventRef=doc(collection(db,'pedidos',orderId,'eventos'));
+  await runTransaction(db,async tx=>{
+   const snap=await tx.get(orderRef);if(!snap.exists()||snap.data().deleted===true)throw Error('O pedido já foi excluído.');
+   const before=snap.data(),rev=Number(before.revision||0)+1;
+   tx.update(orderRef,{deleted:true,deletedAt:serverTimestamp(),deletedByUid:currentUser.uid,deletedByName:profile.nome,updatedAt:nowISO(),updatedAtServer:serverTimestamp(),updatedByUid:currentUser.uid,updatedByName:profile.nome,revision:rev,lastEventId:eventRef.id});
+   tx.set(eventRef,{tipo:'exclusao',authorUid:currentUser.uid,authorName:profile.nome,createdAt:serverTimestamp(),revision:rev,
+    beforePcp:before.pcpStatus,afterPcp:before.pcpStatus,beforeAssist:before.assistStatus,afterAssist:before.assistStatus,
+    beforePv:before.pv,afterPv:before.pv,beforeClient:before.client,afterClient:before.client,
+    beforeSalesperson:before.salesperson,afterSalesperson:before.salesperson,beforeEquipment:before.equipment,afterEquipment:before.equipment,
+    beforeAgreedDate:before.agreedDate||'',afterAgreedDate:before.agreedDate||''});
+  });
+  toast(`Pedido ${order.pv} retirado da lista. Registro preservado.`);
+ }catch(err){toast('Não foi possível excluir: '+errors(err),true);}finally{if(btn)btn.disabled=false;}
+}
+
 function orderFieldsFromForm(prefix){return {pv:clean($(prefix+'PV').value),client:clean($(prefix+'Client').value),salesperson:clean($(prefix+'Sales').value),equipment:clean($(prefix+'Equipment').value)};}
 function duplicatePV(pv,exceptId){return records.some(r=>r.id!==exceptId&&r.pv.trim().toLowerCase()===pv.trim().toLowerCase());}
 $('newOrderForm').addEventListener('submit',async e=>{
   e.preventDefault();if(!profile)return;
-  const r={pv:clean($('pv').value),client:clean($('client').value),salesperson:clean($('salesperson').value),equipment:clean($('equipment').value)};
-  if(Object.values(r).some(x=>!x))return toast('Preencha os quatro campos.',true);
+  const r={pv:clean($('pv').value),client:clean($('client').value),salesperson:clean($('salesperson').value),equipment:clean($('equipment').value),agreedDate:$('agreedDate').value};
+  if([r.pv,r.client,r.salesperson,r.equipment].some(x=>!x))return toast('Preencha os quatro campos obrigatórios.',true);
   if(duplicatePV(r.pv))return toast('Este número PV já existe.',true);
   $('createBtn').disabled=true;
   try{
     const orderRef=doc(collection(db,'pedidos'));
     const t=nowISO();await runTransaction(db,async tx=>{
-      tx.set(orderRef,{id:orderRef.id,...r,pcpStatus:'pendente',assistStatus:'pendente',observations:'',createdAt:t,updatedAt:t,updatedAtServer:serverTimestamp(),createdByUid:currentUser.uid,createdByName:profile.nome,updatedByUid:currentUser.uid,updatedByName:profile.nome,revision:0,lastEventId:''});
+      tx.set(orderRef,{id:orderRef.id,...r,deleted:false,pcpStatus:'pendente',assistStatus:'pendente',observations:'',createdAt:t,updatedAt:t,updatedAtServer:serverTimestamp(),createdByUid:currentUser.uid,createdByName:profile.nome,updatedByUid:currentUser.uid,updatedByName:profile.nome,revision:0,lastEventId:''});
     });
     $('newOrderForm').reset();toast('Pedido registrado com sucesso.');
   }catch(err){toast(errors(err),true);}finally{$('createBtn').disabled=false;}
 });
 
-const auditFields=['pv','client','salesperson','equipment','pcpStatus','assistStatus'];
+const auditFields=['pv','client','salesperson','equipment','agreedDate','pcpStatus','assistStatus'];
 async function updateOrder(orderId,patch){
   if(!currentUser||!profile)throw Error('Faça login para atualizar.');
   const orderRef=doc(db,'pedidos',orderId),eventRef=doc(collection(db,'pedidos',orderId,'eventos'));
   return await runTransaction(db,async tx=>{
     const snap=await tx.get(orderRef);if(!snap.exists())throw Error('Pedido não encontrado.');
+    if(snap.data().deleted===true)throw Error('Pedido excluído: disponível somente para consulta.');
     const before=snap.data(),after={...before,...patch};
     const changed=auditFields.filter(f=>String(before[f]??'')!==String(after[f]??''));
     // Verificação no aplicativo; as mesmas restrições são obrigatórias nas regras do Firestore.
@@ -149,7 +185,7 @@ async function updateOrder(orderId,patch){
       beforePcp:before.pcpStatus,afterPcp:after.pcpStatus,beforeAssist:before.assistStatus,afterAssist:after.assistStatus,
       beforePv:before.pv,afterPv:after.pv,beforeClient:before.client,afterClient:after.client,
       beforeSalesperson:before.salesperson,afterSalesperson:after.salesperson,
-      beforeEquipment:before.equipment,afterEquipment:after.equipment
+      beforeEquipment:before.equipment,afterEquipment:after.equipment,beforeAgreedDate:before.agreedDate||'',afterAgreedDate:after.agreedDate||''
     });
     return true;
   });
@@ -157,20 +193,23 @@ async function updateOrder(orderId,patch){
 
 function openDetails(id){const r=records.find(x=>x.id===id);if(!r)return;activeId=id;updateModalData(r);$('commentAuthor').textContent=profile?.nome||'—';$('commentText').value='';$('fileInput').value='';$('selectedFiles').textContent='Nenhum arquivo selecionado.';historyComments=[];historyEvents=[];renderTimeline();$('detailsDialog').showModal();subscribeHistory(id);}
 function updateModalData(r){$('modalPV').textContent=r.pv;$('createdTime').textContent=prettyTime(r.createdAt);$('updatedTime').textContent=prettyTime(r.updatedAtServer||r.updatedAt);$('updatedBy').textContent=r.updatedByName||r.createdByName||'Registro anterior';
- const values={editPV:r.pv,editClient:r.client,editSales:r.salesperson,editEquipment:r.equipment,editPCP:r.pcpStatus,editAssist:r.assistStatus};
+ const values={editPV:r.pv,editClient:r.client,editSales:r.salesperson,editEquipment:r.equipment,editAgreedDate:r.agreedDate||'',editPCP:r.pcpStatus,editAssist:r.assistStatus};
  // Não sobrescreve alterações ainda não salvas quando o usuário está digitando.
  if(!document.activeElement?.closest('#editForm'))for(const [id,val]of Object.entries(values))$(id).value=val;
  else if(!$('editPV').value){for(const [id,val]of Object.entries(values))$(id).value=val;}
- $('editPCP').disabled=!canEditStatus('pcpStatus');
- $('editAssist').disabled=!canEditStatus('assistStatus');
- $('statusAccessNote').textContent=sectorNotice();
+ const archived=isDeleted(r);
+ document.querySelectorAll('#editForm input, #editForm select').forEach(el=>{el.disabled=archived;});
+ if(!archived){$('editPCP').disabled=!canEditStatus('pcpStatus');$('editAssist').disabled=!canEditStatus('assistStatus');}
+ $('saveOrderBtn').classList.toggle('hidden',archived);$('commentForm').classList.toggle('hidden',archived);
+ $('modalArchivedNotice').classList.toggle('hidden',!archived);
+ $('statusAccessNote').textContent=archived?'Pedido excluído por '+(r.deletedByName||'Usuário')+' em '+prettyTime(r.deletedAt)+'. Apenas leitura.':sectorNotice();
  $('legacyNote').textContent=r.observations?'Observações herdadas da versão anterior: '+r.observations:'';$('legacyNote').classList.toggle('hidden',!r.observations);
 }
 function closeDetails(){if($('detailsDialog').open)$('detailsDialog').close();stopHistory();activeId=null;}
 $('closeDialog').addEventListener('click',closeDetails);$('closeDialogTop').addEventListener('click',closeDetails);$('detailsDialog').addEventListener('close',()=>{stopHistory();activeId=null;});
 $('editForm').addEventListener('submit',async e=>{
  e.preventDefault();if(!activeId)return;
- const r={pv:clean($('editPV').value),client:clean($('editClient').value),salesperson:clean($('editSales').value),equipment:clean($('editEquipment').value)};
+ const r={pv:clean($('editPV').value),client:clean($('editClient').value),salesperson:clean($('editSales').value),equipment:clean($('editEquipment').value),agreedDate:$('editAgreedDate').value};
  // Não incluir o status do outro setor nem reenviar valor antigo em uma edição concorrente.
  if(canEditStatus('pcpStatus'))r.pcpStatus=$('editPCP').value;
  if(canEditStatus('assistStatus'))r.assistStatus=$('editAssist').value;
@@ -184,7 +223,7 @@ function subscribeHistory(id){stopHistory();const sub=collection(db,'pedidos',id
   unsubscribeComments=onSnapshot(query(sub,orderBy('createdAt','asc')),snap=>{if(activeId!==id)return;historyComments=snap.docs.map(d=>({id:d.id,...d.data()}));renderTimeline();},e=>{toast('Erro no histórico de interações: '+errors(e),true);});
   unsubscribeEvents=onSnapshot(query(events,orderBy('createdAt','asc')),snap=>{if(activeId!==id)return;historyEvents=snap.docs.map(d=>({id:d.id,...d.data()}));renderTimeline();},e=>{toast('Erro no histórico de alterações: '+errors(e),true);});
 }
-function eventsDiff(v){const pairs=[['Status PCP',v.beforePcp,v.afterPcp],['Status Assistência',v.beforeAssist,v.afterAssist],['PV',v.beforePv,v.afterPv],['Cliente',v.beforeClient,v.afterClient],['Vendedor',v.beforeSalesperson,v.afterSalesperson],['Equipamento',v.beforeEquipment,v.afterEquipment]];
+function eventsDiff(v){const pairs=[['Status PCP',v.beforePcp,v.afterPcp],['Status Assistência',v.beforeAssist,v.afterAssist],['PV',v.beforePv,v.afterPv],['Cliente',v.beforeClient,v.afterClient],['Vendedor',v.beforeSalesperson,v.afterSalesperson],['Equipamento',v.beforeEquipment,v.afterEquipment],['Prazo combinado',v.beforeAgreedDate,v.afterAgreedDate]];
  return pairs.filter(([_,a,b])=>String(a??'')!==String(b??''));}
 function renderTimeline(){
  const order=records.find(r=>r.id===activeId);
@@ -193,7 +232,7 @@ function renderTimeline(){
  const html=entries.map(v=>{
    const author=v.authorName||v.author||'Autor desconhecido',date=prettyTime(v.createdAt||v.clientCreatedAt);
    if(v.kind==='audit'){
-     const diffs=eventsDiff(v);return `<article class="entry audit"><div class="byline"><strong>✦ ${escapeHTML(author)} · alteração de pedido</strong><time>${escapeHTML(date)}</time></div>${diffs.map(([field,from,to])=>`<div class="change-line"><span class="change-label">${escapeHTML(field)}:</span><span class="change-before">${escapeHTML(label[from]||from||'—')}</span><span>→</span><span class="change-after">${escapeHTML(label[to]||to||'—')}</span></div>`).join('')||'<p>Atualização registrada.</p>'}</article>`;
+     const diffs=eventsDiff(v);return `<article class="entry audit"><div class="byline"><strong>✦ ${escapeHTML(author)} · ${v.tipo==='exclusao'?'exclusão do pedido':'alteração de pedido'}</strong><time>${escapeHTML(date)}</time></div>${v.tipo==='exclusao'?'<p>Pedido retirado da lista ativa e preservado nos Registros.</p>':''}${diffs.map(([field,from,to])=>`<div class="change-line"><span class="change-label">${escapeHTML(field)}:</span><span class="change-before">${escapeHTML(label[from]||from||'—')}</span><span>→</span><span class="change-after">${escapeHTML(label[to]||to||'—')}</span></div>`).join('')||'<p>Atualização registrada.</p>'}</article>`;
    }
    const att=Array.isArray(v.attachments)?v.attachments:[];
    return `<article class="entry ${v.authorUid?'':'legacy'}"><div class="byline"><strong>◉ ${escapeHTML(author)}${v.authorUid?'':' · registro anterior'}</strong><time>${escapeHTML(date)}</time></div>${v.message?`<p>${escapeHTML(v.message)}</p>`:''}${att.length?`<div class="attachment-list">${att.map((a,i)=>`<span class="attachment-actions"><span>📎 ${escapeHTML(a.name||'Anexo')}</span><button class="attachment" type="button" data-attachment-action="open" data-attach-event="${escapeHTML(v.id)}" data-attach-index="${i}">Abrir</button><button class="attachment" type="button" data-attachment-action="download" data-attach-event="${escapeHTML(v.id)}" data-attach-index="${i}">Baixar</button></span>`).join('')}</div>`:''}</article>`;
@@ -300,7 +339,7 @@ $('commentForm').addEventListener('submit',async e=>{
   }
   // O histórico é publicado somente após a conclusão de todos os blocos dos anexos.
   await runTransaction(db,async tx=>{
-   const snap=await tx.get(doc(db,'pedidos',id));if(!snap.exists())throw Error('Pedido excluído ou indisponível.');
+   const snap=await tx.get(doc(db,'pedidos',id));if(!snap.exists()||snap.data().deleted===true)throw Error('Pedido excluído ou indisponível.');
    tx.set(commentRef,{tipo:'comentario',authorUid:currentUser.uid,authorName:profile.nome,message,attachments,createdAt:serverTimestamp()});
   });
   if(activeId===id){$('commentText').value='';$('fileInput').value='';$('selectedFiles').textContent='Nenhum arquivo selecionado.';}
@@ -308,6 +347,24 @@ $('commentForm').addEventListener('submit',async e=>{
  }catch(err){toast('Falha ao registrar: '+errors(err)+'. Arquivos parcialmente enviados podem precisar de limpeza pelo administrador.',true);}
  finally{$('sendCommentBtn').disabled=false;$('uploadProgress').classList.add('hidden');}
 });
+
+function logEntries(){
+ const result=[];
+ for(const r of records){
+  result.push({key:r.id+':created',id:r.id,tipo:'criado',pv:r.pv,client:r.client,author:r.createdByName||'Autor não registrado',date:r.createdAt,deleted:isDeleted(r)});
+  if(isDeleted(r))result.push({key:r.id+':deleted',id:r.id,tipo:'excluido',pv:r.pv,client:r.client,author:r.deletedByName||'Autor não registrado',date:r.deletedAt,deleted:true});
+ }
+ return result.sort((a,b)=>dateValue(b.date).localeCompare(dateValue(a.date)));
+}
+function renderLogs(){
+ const term=clean($('logSearch').value).toLowerCase(),kind=$('logTypeFilter').value;
+ const all=logEntries(),rows=all.filter(r=>(kind==='todos'||kind===r.tipo)&&[r.pv,r.client,r.author].some(v=>String(v||'').toLowerCase().includes(term)));
+ $('registrosBadge').textContent=String(all.length);
+ $('registrosCount').textContent=rows.length+' de '+all.length+' registros';
+ $('logsBody').innerHTML=rows.length?rows.map(r=>`<tr><td>${escapeHTML(prettyTime(r.date))}</td><td><span class="register-pill ${r.tipo==='excluido'?'deleted':''}">${r.tipo==='criado'?'Criado':'Excluído'}</span></td><td><span class="pv">${escapeHTML(r.pv)}</span></td><td>${escapeHTML(r.client)}</td><td>${escapeHTML(r.author)}</td><td><span class="state-pill ${r.deleted?'deleted':''}">${r.deleted?'Excluído da lista':'Ativo'}</span></td><td><button class="btn btn-sm" type="button" data-log-detail="${escapeHTML(r.id)}">Detalhes</button></td></tr>`).join(''):'<tr><td colspan="7" class="empty">Nenhum registro encontrado.</td></tr>';
+}
+$('logSearch').addEventListener('input',renderLogs);$('logTypeFilter').addEventListener('change',renderLogs);
+$('logsBody').addEventListener('click',e=>{const b=e.target.closest('button[data-log-detail]');if(b)openDetails(b.dataset.logDetail);});
 
 document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>{
  document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('selected',x===b));
@@ -318,7 +375,7 @@ function statsFor(rows){
  const pcp={pendente:0,confirmado:0,recusado:0},assist={...pcp};let both=0;
  rows.forEach(r=>{if(pcp[r.pcpStatus]!==undefined)pcp[r.pcpStatus]++;if(assist[r.assistStatus]!==undefined)assist[r.assistStatus]++;if(r.pcpStatus==='confirmado'&&r.assistStatus==='confirmado')both++;});
  return {total:rows.length,pcp,assist,both};}
-function inRange(){const start=$('dateFrom').value,end=$('dateTo').value;if(start&&end&&start>end)throw Error('A data inicial deve ser anterior à data final.');return records.filter(r=>{const day=localDay(r.createdAt);return (!start||day>=start)&&(!end||day<=end);});}
+function inRange(){const start=$('dateFrom').value,end=$('dateTo').value;if(start&&end&&start>end)throw Error('A data inicial deve ser anterior à data final.');return activeOrders().filter(r=>{const day=localDay(r.createdAt);return (!start||day>=start)&&(!end||day<=end);});}
 function percent(n,total){return total?Math.round(n*100/total):0;}
 function barsHtml(counts,total){return states.map(s=>`<div class="bar"><div class="bar-head"><span>${label[s]}</span><strong>${counts[s]} (${percent(counts[s],total)}%)</strong></div><div class="track"><span class="fill ${s}" style="width:${percent(counts[s],total)}%"></span></div></div>`).join('');}
 function renderDashboard(){try{const s=statsFor(inRange());$('totalStat').textContent=s.total;$('pcpStat').textContent=s.pcp.confirmado;$('assistStat').textContent=s.assist.confirmado;$('bothStat').textContent=s.both;$('pcpRate').textContent=percent(s.pcp.confirmado,s.total)+'% dos pedidos';$('assistRate').textContent=percent(s.assist.confirmado,s.total)+'% dos pedidos';$('bothRate').textContent=percent(s.both,s.total)+'% dos pedidos';$('pcpBars').innerHTML=barsHtml(s.pcp,s.total);$('assistBars').innerHTML=barsHtml(s.assist,s.total);$('periodLabel').textContent='Período: '+($('dateFrom').value||'início')+' até '+($('dateTo').value||'hoje');}
@@ -326,7 +383,7 @@ function renderDashboard(){try{const s=statsFor(inRange());$('totalStat').textCo
 ['dateFrom','dateTo'].forEach(id=>$(id).addEventListener('change',renderDashboard));$('clearDates').addEventListener('click',()=>{$('dateFrom').value='';$('dateTo').value='';renderDashboard();});
 function download(name,blob){const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),40000);}
 function csvCell(v){let s=String(v??'');if(/^[\s\t\r\n]*[=+@\-]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"';}
-$('csvBtn').addEventListener('click',()=>{const cols=[['PV','pv'],['Cliente','client'],['Vendedor','salesperson'],['Equipamento','equipment'],['PCP','pcpStatus'],['Assistência','assistStatus'],['Criado em','createdAt'],['Atualizado em','updatedAt']];const lines=[cols.map(c=>csvCell(c[0])).join(';'),...records.map(r=>cols.map(([_,k])=>csvCell(r[k])).join(';'))];download('pedidos_'+localDay(new Date())+'.csv',new Blob(['\ufeff'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'}));toast('CSV exportado.');});
+$('csvBtn').addEventListener('click',()=>{const cols=[['PV','pv'],['Cliente','client'],['Vendedor','salesperson'],['Equipamento','equipment'],['Prazo combinado','agreedDate'],['PCP','pcpStatus'],['Assistência','assistStatus'],['Criado em','createdAt'],['Atualizado em','updatedAt']];const lines=[cols.map(c=>csvCell(c[0])).join(';'),...activeOrders().map(r=>cols.map(([_,k])=>csvCell(r[k])).join(';'))];download('pedidos_'+localDay(new Date())+'.csv',new Blob(['\ufeff'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'}));toast('CSV exportado.');});
 // PDF A4 com gráficos, gerado no navegador, sem serviço externo.
 function canvasPdf(canvas){const data=canvas.toDataURL('image/jpeg',.9);const raw=atob(data.slice(data.indexOf(',')+1));const jpg=Uint8Array.from(raw,c=>c.charCodeAt(0)),enc=new TextEncoder();const parts=[];let pos=0;const offsets=[0];const push=x=>{const b=typeof x==='string'?enc.encode(x):x;parts.push(b);pos+=b.length;};const obj=(n,s)=>{offsets[n]=pos;push(`${n} 0 obj\n${s}\nendobj\n`);};push('%PDF-1.4\n%PDF-Generated\n');obj(1,'<< /Type /Catalog /Pages 2 0 R >>');obj(2,'<< /Type /Pages /Kids [3 0 R] /Count 1 >>');obj(3,'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /XObject << /Im1 4 0 R >> >> /Contents 5 0 R >>');offsets[4]=pos;push(`4 0 obj\n<< /Type /XObject /Subtype /Image /Width ${canvas.width} /Height ${canvas.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpg.length} >>\nstream\n`);push(jpg);push('\nendstream\nendobj\n');const c='q\n595.28 0 0 841.89 0 0 cm\n/Im1 Do\nQ\n';obj(5,`<< /Length ${enc.encode(c).length} >>\nstream\n${c}endstream`);const xref=pos;push('xref\n0 6\n0000000000 65535 f \n');for(let i=1;i<=5;i++)push(`${String(offsets[i]).padStart(10,'0')} 00000 n \n`);push(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);return new Blob(parts,{type:'application/pdf'});}
 function exportPdf(){let s;try{s=statsFor(inRange());}catch(e){return toast(errors(e),true);}const c=document.createElement('canvas');c.width=1240;c.height=1754;const x=c.getContext('2d');if(!x)return toast('Seu navegador não oferece suporte ao relatório.',true);

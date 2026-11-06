@@ -1,34 +1,28 @@
-# Acompanhamento de Pedidos — V5 | Permissões por Setor
+# Acompanhamento de Pedidos — Versão 6 | PCP e Assistência
 
-Projeto Firebase: **acompanhamentopcpass**. Preserva todas as funcionalidades da V4, inclusive o login, comentários, anexos em blocos no Firestore, histórico de mudanças, filtros, dashboard e PDF.
+## Novidades
+- Botão **Excluir** ao lado de Detalhes, com confirmação. Exclusão é lógica (o documento fica no Firestore).
+- Aba **Registros**, à direita do Dashboard, exibe quem criou e quem excluiu cada pedido, com data e hora.
+- Os pedidos excluídos deixam a lista ativa, dashboard e CSV. Na aba Registros podem ser consultados (somente leitura), mantendo histórico e anexos.
+- Campo **Prazo / Data combinada** no cadastro, coluna na tabela, edição em Detalhes e registro automático no histórico de alterações.
 
-## Regra de negócio
+## Preparação / publicação
+Projeto Firebase: `acompanhamentopcpass` (configuração já preenchida em `firebase-config.js`).
 
-- Usuários com `/usuarios/{UID}.papel = "PCP"` podem editar **somente Status PCP**.
-- Usuários com `/usuarios/{UID}.papel = "Assistência"` ou `"Assistência Técnica"` podem editar **somente Status Assistência**.
-- Ambos podem visualizar os dois status, cadastrar pedidos, editar os dados gerais do PV e registrar comentários/anexos. O histórico continua sendo gerado automaticamente.
-- Usuários ativos com `papel` diferente destes podem ler e comentar, mas não conseguem editar nenhum status.
-- A permissão é verificada no **Firestore**, não apenas na interface. Não conceda a usuários acesso administrativo ao console Firebase, pois as regras de cliente não restringem administradores.
+1. Faça backup do arquivo atual `firestore.rules` no console Firebase e dos arquivos atuais do GitHub.
+2. Publique **primeiro** o arquivo `firestore.rules` desta V6 em Firebase > Firestore Database > Regras.
+3. No GitHub do Acompanhamento de Pedidos, atualize apenas `index.html` e `app.js` com os arquivos desta V6. Deixe `firebase-config.js` como está.
+4. Confirme a publicação em Settings > Pages e recarregue com Ctrl+F5.
+5. Teste com PV fictício: cadastro, data combinada, edição, histórico, exclusão, aba Registros e consulta de pedido arquivado.
 
-## Publicação / atualização (sem apagar pedidos)
+## Permissões
+- PCP altera apenas status PCP; Assistência altera apenas status Assistência. Outros dados (inclusive prazo combinado) podem ser editados por usuários ativos.
+- **Exclusão lógica pode ser feita por qualquer usuário com perfil ativo**. Nome/UID do autor e carimbo de horário do servidor são gravados no Firestore e o evento é registrado atomicamente.
+- Excluídos não podem ser alterados pelo aplicativo e não são apagados fisicamente, inclusive seus comentários e anexos.
+- Regras não autorizam exclusão física a partir do cliente.
 
-1. No Firebase Console > Firestore Database > **Dados** > `usuarios` > abra o documento de cada funcionário (identificado pelo UID do Authentication). Confirme o campo `papel` com **um dos valores exatos acima**, tipo **string**. Não altere `nome` ou `ativo`. Faça isso para todos os funcionários antes de publicar as novas regras.
-2. Firestore Database > **Regras**: faça backup das regras atuais. Cole **TODO** o conteúdo de `firestore.rules` deste pacote e clique em **Publicar**. Este projeto é independente do SAT.
-3. No repositório GitHub do Acompanhamento de Pedidos, substitua os arquivos **`index.html`** e **`app.js`** pelos desta V5, na raiz do repositório. `firebase-config.js` e `.nojekyll` não precisam mudar.
-4. Em GitHub > Settings > Pages, a publicação por branch `main`, pasta `/(root)`, continua igual. Aguarde a conclusão da implantação; atualize a página com Ctrl+F5.
-5. Verifique com duas contas (uma PCP, outra Assistência), alterando os status autorizados e garantindo que o outro status é apenas visualização. Confira o registro automático no histórico.
+## Compatibilidade
+Pedidos cadastrados nas versões anteriores, sem `agreedDate` ou `deleted`, continuam aparecendo como ativos e com prazo não definido. A nova versão preserva o histórico existente e o conteúdo dos anexos.
 
-**Atenção:** publicar o `app.js` sem as regras novas deixa a proteção apenas visual. Publicar as regras novas antes de atualizar o `app.js` pode causar erro de permissão no aplicativo antigo, pois ele tentará atualizar status dos dois setores. Atualize ambos numa mesma janela de manutenção; prefira publicar as regras e os arquivos sem usuários alterando pedidos durante a troca.
-
-**Arquivos para GitHub:** `index.html`, `app.js`, `firebase-config.js` e `.nojekyll`.
-**Somente no Firebase:** `firestore.rules`.
-
-## Estrutura Firestore
-
-- `usuarios/{UID}`: `nome` (string), `ativo` (boolean), `papel` (string)
-- `pedidos/{ID}`: PV e status independentes
-- `pedidos/{ID}/eventos`: histórico de alterações
-- `pedidos/{ID}/interacoes`: comentários com autoria
-- `pedidos/{ID}/arquivos`: anexos até 2 MiB/arquivo em blocos Firestore
-
-Este projeto não depende de Storage/Blaze para novos anexos. As cotas Spark são limitadas.
+## Observação
+A aba Registros apresenta os eventos de criação dos documentos existentes e eventos de exclusão da V6. Pedidos que tenham sido excluídos fisicamente no passado não são recuperáveis por esta atualização.

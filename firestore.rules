@@ -40,7 +40,8 @@ service cloud.firestore {
     function validOrder(id) {
       let d = request.resource.data;
       return d.keys().hasOnly([
-        'id','pv','client','salesperson','equipment',
+        'id','pv','client','salesperson','equipment','agreedDate',
+        'deleted','deletedAt','deletedByUid','deletedByName',
         'pcpStatus','assistStatus','observations','createdAt','updatedAt',
         'createdByUid','createdByName','updatedByUid','updatedByName',
         'updatedAtServer','revision','lastEventId'
@@ -58,7 +59,15 @@ service cloud.firestore {
       && d.assistStatus in ['pendente','confirmado','recusado']
       && d.observations is string && d.observations.size() <= 10000
       && d.createdAt is string && d.createdAt.size() <= 64
-      && d.updatedAt is string && d.updatedAt.size() <= 64;
+      && d.updatedAt is string && d.updatedAt.size() <= 64
+      && d.get('agreedDate','') is string
+      && (d.get('agreedDate','') == '' || d.get('agreedDate','').matches('[0-9]{4}-[0-9]{2}-[0-9]{2}'))
+      && d.get('deleted',false) is bool
+      && (!d.get('deleted',false) || (
+        d.get('deletedAt',null) is timestamp
+        && d.get('deletedByUid','') is string
+        && d.get('deletedByName','') is string
+      ));
     }
     function createdOrder(id) {
       let d = request.resource.data;
@@ -73,16 +82,19 @@ service cloud.firestore {
         && d.updatedByName == memberName()
         && d.updatedAtServer == request.time
         && d.pcpStatus == 'pendente' && d.assistStatus == 'pendente'
+        && d.keys().hasAll(['agreedDate','deleted']) && d.deleted == false
         && d.revision == 0 && d.lastEventId == '';
     }
     function editedOrder(id) {
       let d = request.resource.data;
       return member() && validOrder(id) && sectorStatusAllowed()
+        && resource.data.get('deleted',false) == false
+        && d.get('deleted',false) == false
         && d.keys().hasAll([
           'updatedByUid','updatedByName','updatedAtServer','revision','lastEventId'
         ])
         && d.diff(resource.data).affectedKeys().hasOnly([
-          'pv','client','salesperson','equipment','pcpStatus','assistStatus',
+          'pv','client','salesperson','equipment','agreedDate','pcpStatus','assistStatus',
           'updatedAt','updatedAtServer','updatedByUid','updatedByName',
           'revision','lastEventId'
         ])
@@ -97,11 +109,37 @@ service cloud.firestore {
         && getAfter(eventPath(id,d.lastEventId)).data.authorUid == request.auth.uid
         && getAfter(eventPath(id,d.lastEventId)).data.revision == d.revision;
     }
+    // Exclusão lógica: somente retira da lista, jamais apaga documento ou anexos.
+    function softDeletedOrder(id) {
+      let d = request.resource.data;
+      return member() && validOrder(id)
+        && resource.data.get('deleted',false) == false
+        && d.keys().hasAll(['deleted','deletedAt','deletedByUid','deletedByName','updatedByUid','updatedByName','updatedAtServer','revision','lastEventId'])
+        && d.deleted == true
+        && d.deletedAt == request.time
+        && d.deletedByUid == request.auth.uid
+        && d.deletedByName == memberName()
+        && d.updatedByUid == request.auth.uid
+        && d.updatedByName == memberName()
+        && d.updatedAtServer == request.time
+        && d.diff(resource.data).affectedKeys().hasOnly([
+          'deleted','deletedAt','deletedByUid','deletedByName',
+          'updatedAt','updatedAtServer','updatedByUid','updatedByName',
+          'revision','lastEventId'
+        ])
+        && d.revision is int && d.revision == resource.data.get('revision',0) + 1
+        && d.lastEventId is string && d.lastEventId.size() > 0 && d.lastEventId.size() <= 100
+        && !exists(eventPath(id,d.lastEventId))
+        && existsAfter(eventPath(id,d.lastEventId))
+        && getAfter(eventPath(id,d.lastEventId)).data.tipo == 'exclusao'
+        && getAfter(eventPath(id,d.lastEventId)).data.authorUid == request.auth.uid
+        && getAfter(eventPath(id,d.lastEventId)).data.revision == d.revision;
+    }
     match /pedidos/{orderId} {
       allow get, list: if member();
       allow create: if createdOrder(orderId);
-      allow update: if editedOrder(orderId);
-      // Exclusões pelo cliente desabilitadas para preservar o histórico.
+      allow update: if editedOrder(orderId) || softDeletedOrder(orderId);
+      // Hard-delete bloqueado: preserva subcoleções, histórico e anexos.
       allow delete: if false;
 
       // Comentários novos: autor validado pelo perfil e horário pelo servidor.
@@ -144,6 +182,7 @@ service cloud.firestore {
       match /arquivos/{fileId} {
         allow get, list: if member();
         allow create: if member() && exists(orderPath(orderId))
+          && get(orderPath(orderId)).data.get('deleted',false) == false
           && fileId.matches('[A-Za-z0-9_-]{8,80}')
           && request.resource.data.keys().hasOnly([
             'authorUid','interactionId','name','type','size','chunks','createdAt'
@@ -171,6 +210,7 @@ service cloud.firestore {
           allow get, list: if member();
           allow create: if member()
             && exists(filePath(fileId))
+            && get(orderPath(orderId)).data.get('deleted',false) == false
             && get(filePath(fileId)).data.authorUid == request.auth.uid
             && partId.matches('[0-9]{4}')
             && request.resource.data.keys().hasOnly(['authorUid','index','data'])
@@ -189,6 +229,7 @@ service cloud.firestore {
         allow get, list: if member();
         allow create: if member()
           && exists(orderPath(orderId))
+          && get(orderPath(orderId)).data.get('deleted',false) == false
           && request.resource.data.keys().hasOnly([
             'tipo','authorUid','authorName','message','attachments','createdAt'
           ])
@@ -214,15 +255,28 @@ service cloud.firestore {
             'tipo','authorUid','authorName','createdAt','revision',
             'beforePcp','afterPcp','beforeAssist','afterAssist',
             'beforePv','afterPv','beforeClient','afterClient',
-            'beforeSalesperson','afterSalesperson','beforeEquipment','afterEquipment'
+            'beforeSalesperson','afterSalesperson','beforeEquipment','afterEquipment',
+            'beforeAgreedDate','afterAgreedDate'
           ])
           && request.resource.data.keys().hasAll([
             'tipo','authorUid','authorName','createdAt','revision',
             'beforePcp','afterPcp','beforeAssist','afterAssist',
             'beforePv','afterPv','beforeClient','afterClient',
-            'beforeSalesperson','afterSalesperson','beforeEquipment','afterEquipment'
+            'beforeSalesperson','afterSalesperson','beforeEquipment','afterEquipment',
+            'beforeAgreedDate','afterAgreedDate'
           ])
-          && request.resource.data.tipo == 'alteracao'
+          && request.resource.data.tipo in ['alteracao','exclusao']
+          && (
+            (request.resource.data.tipo == 'alteracao'
+              && get(orderPath(orderId)).data.get('deleted',false) == false
+              && getAfter(orderPath(orderId)).data.get('deleted',false) == false)
+            ||
+            (request.resource.data.tipo == 'exclusao'
+              && get(orderPath(orderId)).data.get('deleted',false) == false
+              && getAfter(orderPath(orderId)).data.get('deleted',false) == true
+              && getAfter(orderPath(orderId)).data.deletedAt == request.time
+              && getAfter(orderPath(orderId)).data.deletedByUid == request.auth.uid)
+          )
           && request.resource.data.authorUid == request.auth.uid
           && request.resource.data.authorName == memberName()
           && request.resource.data.createdAt == request.time
@@ -242,7 +296,9 @@ service cloud.firestore {
           && request.resource.data.beforeSalesperson == get(orderPath(orderId)).data.salesperson
           && request.resource.data.afterSalesperson == getAfter(orderPath(orderId)).data.salesperson
           && request.resource.data.beforeEquipment == get(orderPath(orderId)).data.equipment
-          && request.resource.data.afterEquipment == getAfter(orderPath(orderId)).data.equipment;
+          && request.resource.data.afterEquipment == getAfter(orderPath(orderId)).data.equipment
+          && request.resource.data.beforeAgreedDate == get(orderPath(orderId)).data.get('agreedDate','')
+          && request.resource.data.afterAgreedDate == getAfter(orderPath(orderId)).data.get('agreedDate','');
         allow update, delete: if false;
       }
     }
