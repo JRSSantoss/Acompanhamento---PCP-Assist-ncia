@@ -108,10 +108,10 @@ function filteredOrders(){const search=clean($('search').value).toLowerCase(),pc
 function renderTable(){
  const r=filteredOrders();$('recordCount').textContent=r.length+' de '+activeOrders().length;
  $('recordsBody').innerHTML=r.length?r.map(v=>`<tr tabindex="0" data-open="${escapeHTML(v.id)}">
- <td>${escapeHTML(prettyTime(v.createdAt))}</td><td><span class="pv">${escapeHTML(v.pv)}</span></td><td><span class="client">${escapeHTML(v.client)}</span></td>
+ <td>${escapeHTML(prettyTime(v.createdAt))}</td><td><span class="pv">${escapeHTML(v.pv||'Não informado')}</span></td><td><span class="client">${escapeHTML(v.client)}</span></td>
  <td>${escapeHTML(v.salesperson)}</td><td>${escapeHTML(v.equipment)}</td><td><span class="deadline ${v.agreedDate?'':'not-set'}">${escapeHTML(displayDate(v.agreedDate))}</span></td>
  <td>${selectHTML(v.id,'pcpStatus',v.pcpStatus)}</td><td>${selectHTML(v.id,'assistStatus',v.assistStatus)}</td>
- <td class="actions-cell"><div class="button-row"><button class="btn btn-sm detail-btn" type="button" data-id="${escapeHTML(v.id)}">Detalhes</button><button class="btn btn-sm btn-outline-danger" type="button" data-delete="${escapeHTML(v.id)}" aria-label="Excluir pedido ${escapeHTML(v.pv)} da lista">Excluir</button></div></td></tr>`).join(''):'<tr><td colspan="9" class="empty">Nenhum pedido corresponde aos filtros selecionados.</td></tr>';
+ <td class="actions-cell"><div class="button-row"><button class="btn btn-sm detail-btn" type="button" data-id="${escapeHTML(v.id)}">Detalhes</button><button class="btn btn-sm btn-outline-danger" type="button" data-delete="${escapeHTML(v.id)}" aria-label="Excluir pedido ${escapeHTML(v.pv||v.client)} da lista">Excluir</button></div></td></tr>`).join(''):'<tr><td colspan="9" class="empty">Nenhum pedido corresponde aos filtros selecionados.</td></tr>';
 }
 $('search').addEventListener('input',renderTable);$('pcpFilter').addEventListener('change',renderTable);$('assistFilter').addEventListener('change',renderTable);
 $('recordsBody').addEventListener('click',e=>{
@@ -130,7 +130,7 @@ $('recordsBody').addEventListener('change',async e=>{
 
 async function confirmDelete(orderId){
  const order=records.find(r=>r.id===orderId);if(!order||isDeleted(order))return;
- if(!window.confirm(`Excluir o pedido ${order.pv} (${order.client}) da lista ativa?\n\nEle ficará preservado na aba Registros, com nome e horário da exclusão. Essa ação não poderá ser desfeita pela interface.`))return;
+ if(!window.confirm(`Excluir o pedido ${order.pv||'sem PV'} (${order.client}) da lista ativa?\n\nEle ficará preservado na aba Registros, com nome e horário da exclusão. Essa ação não poderá ser desfeita pela interface.`))return;
  const btn=document.querySelector(`button[data-delete="${CSS.escape(orderId)}"]`);if(btn)btn.disabled=true;
  try{
   const orderRef=doc(db,'pedidos',orderId),eventRef=doc(collection(db,'pedidos',orderId,'eventos'));
@@ -144,16 +144,16 @@ async function confirmDelete(orderId){
     beforeSalesperson:before.salesperson,afterSalesperson:before.salesperson,beforeEquipment:before.equipment,afterEquipment:before.equipment,
     beforeAgreedDate:before.agreedDate||'',afterAgreedDate:before.agreedDate||''});
   });
-  toast(`Pedido ${order.pv} retirado da lista. Registro preservado.`);
+  toast(`Pedido ${order.pv||'sem PV'} retirado da lista. Registro preservado.`);
  }catch(err){toast('Não foi possível excluir: '+errors(err),true);}finally{if(btn)btn.disabled=false;}
 }
 
 function orderFieldsFromForm(prefix){return {pv:clean($(prefix+'PV').value),client:clean($(prefix+'Client').value),salesperson:clean($(prefix+'Sales').value),equipment:clean($(prefix+'Equipment').value)};}
-function duplicatePV(pv,exceptId){return records.some(r=>r.id!==exceptId&&r.pv.trim().toLowerCase()===pv.trim().toLowerCase());}
+function duplicatePV(pv,exceptId){const value=clean(pv).toLocaleLowerCase('pt-BR');if(!value)return false;return records.some(r=>r.id!==exceptId&&clean(r.pv).toLocaleLowerCase('pt-BR')===value);}
 $('newOrderForm').addEventListener('submit',async e=>{
   e.preventDefault();if(!profile)return;
   const r={pv:clean($('pv').value),client:clean($('client').value),salesperson:clean($('salesperson').value),equipment:clean($('equipment').value),agreedDate:$('agreedDate').value};
-  if([r.pv,r.client,r.salesperson,r.equipment].some(x=>!x))return toast('Preencha os quatro campos obrigatórios.',true);
+  if([r.client,r.salesperson,r.equipment].some(x=>!x))return toast('Preencha cliente, vendedor e equipamento.',true);
   if(duplicatePV(r.pv))return toast('Este número PV já existe.',true);
   $('createBtn').disabled=true;
   try{
@@ -192,11 +192,11 @@ async function updateOrder(orderId,patch){
 }
 
 function openDetails(id){const r=records.find(x=>x.id===id);if(!r)return;activeId=id;updateModalData(r);$('commentAuthor').textContent=profile?.nome||'—';$('commentText').value='';$('fileInput').value='';$('selectedFiles').textContent='Nenhum arquivo selecionado.';historyComments=[];historyEvents=[];renderTimeline();$('detailsDialog').showModal();subscribeHistory(id);}
-function updateModalData(r){$('modalPV').textContent=r.pv;$('createdTime').textContent=prettyTime(r.createdAt);$('updatedTime').textContent=prettyTime(r.updatedAtServer||r.updatedAt);$('updatedBy').textContent=r.updatedByName||r.createdByName||'Registro anterior';
+function updateModalData(r){$('modalPV').textContent=r.pv||'sem PV';$('createdTime').textContent=prettyTime(r.createdAt);$('updatedTime').textContent=prettyTime(r.updatedAtServer||r.updatedAt);$('updatedBy').textContent=r.updatedByName||r.createdByName||'Registro anterior';
  const values={editPV:r.pv,editClient:r.client,editSales:r.salesperson,editEquipment:r.equipment,editAgreedDate:r.agreedDate||'',editPCP:r.pcpStatus,editAssist:r.assistStatus};
  // Não sobrescreve alterações ainda não salvas quando o usuário está digitando.
  if(!document.activeElement?.closest('#editForm'))for(const [id,val]of Object.entries(values))$(id).value=val;
- else if(!$('editPV').value){for(const [id,val]of Object.entries(values))$(id).value=val;}
+ // Enquanto o usuário edita, a sincronização não substitui os campos do formulário.
  const archived=isDeleted(r);
  document.querySelectorAll('#editForm input, #editForm select').forEach(el=>{el.disabled=archived;});
  if(!archived){$('editPCP').disabled=!canEditStatus('pcpStatus');$('editAssist').disabled=!canEditStatus('assistStatus');}
@@ -213,7 +213,7 @@ $('editForm').addEventListener('submit',async e=>{
  // Não incluir o status do outro setor nem reenviar valor antigo em uma edição concorrente.
  if(canEditStatus('pcpStatus'))r.pcpStatus=$('editPCP').value;
  if(canEditStatus('assistStatus'))r.assistStatus=$('editAssist').value;
- if([r.pv,r.client,r.salesperson,r.equipment].some(x=>!x))return toast('Preencha todos os campos obrigatórios.',true);
+ if([r.client,r.salesperson,r.equipment].some(x=>!x))return toast('Preencha cliente, vendedor e equipamento.',true);
  if(duplicatePV(r.pv,activeId))return toast('Este PV já pertence a outro pedido.',true);
  $('saveOrderBtn').disabled=true;try{const changed=await updateOrder(activeId,r);toast(changed?'Alterações registradas com autor e horário.':'Nenhuma alteração realizada.');}
  catch(err){toast(errors(err),true);}finally{$('saveOrderBtn').disabled=false;}
@@ -361,7 +361,7 @@ function renderLogs(){
  const all=logEntries(),rows=all.filter(r=>(kind==='todos'||kind===r.tipo)&&[r.pv,r.client,r.author].some(v=>String(v||'').toLowerCase().includes(term)));
  $('registrosBadge').textContent=String(all.length);
  $('registrosCount').textContent=rows.length+' de '+all.length+' registros';
- $('logsBody').innerHTML=rows.length?rows.map(r=>`<tr><td>${escapeHTML(prettyTime(r.date))}</td><td><span class="register-pill ${r.tipo==='excluido'?'deleted':''}">${r.tipo==='criado'?'Criado':'Excluído'}</span></td><td><span class="pv">${escapeHTML(r.pv)}</span></td><td>${escapeHTML(r.client)}</td><td>${escapeHTML(r.author)}</td><td><span class="state-pill ${r.deleted?'deleted':''}">${r.deleted?'Excluído da lista':'Ativo'}</span></td><td><button class="btn btn-sm" type="button" data-log-detail="${escapeHTML(r.id)}">Detalhes</button></td></tr>`).join(''):'<tr><td colspan="7" class="empty">Nenhum registro encontrado.</td></tr>';
+ $('logsBody').innerHTML=rows.length?rows.map(r=>`<tr><td>${escapeHTML(prettyTime(r.date))}</td><td><span class="register-pill ${r.tipo==='excluido'?'deleted':''}">${r.tipo==='criado'?'Criado':'Excluído'}</span></td><td><span class="pv">${escapeHTML(r.pv||'Não informado')}</span></td><td>${escapeHTML(r.client)}</td><td>${escapeHTML(r.author)}</td><td><span class="state-pill ${r.deleted?'deleted':''}">${r.deleted?'Excluído da lista':'Ativo'}</span></td><td><button class="btn btn-sm" type="button" data-log-detail="${escapeHTML(r.id)}">Detalhes</button></td></tr>`).join(''):'<tr><td colspan="7" class="empty">Nenhum registro encontrado.</td></tr>';
 }
 $('logSearch').addEventListener('input',renderLogs);$('logTypeFilter').addEventListener('change',renderLogs);
 $('logsBody').addEventListener('click',e=>{const b=e.target.closest('button[data-log-detail]');if(b)openDetails(b.dataset.logDetail);});

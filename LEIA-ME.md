@@ -1,28 +1,21 @@
-# Acompanhamento de Pedidos — Versão 6 | PCP e Assistência
+# Acompanhamento de Pedidos — V7 | PV opcional
 
-## Novidades
-- Botão **Excluir** ao lado de Detalhes, com confirmação. Exclusão é lógica (o documento fica no Firestore).
-- Aba **Registros**, à direita do Dashboard, exibe quem criou e quem excluiu cada pedido, com data e hora.
-- Os pedidos excluídos deixam a lista ativa, dashboard e CSV. Na aba Registros podem ser consultados (somente leitura), mantendo histórico e anexos.
-- Campo **Prazo / Data combinada** no cadastro, coluna na tabela, edição em Detalhes e registro automático no histórico de alterações.
+## Alteração
+- O campo **Número PV** não é mais obrigatório no cadastro e na edição dos pedidos.
+- Pedidos sem número PV aparecem como **Não informado** na tabela e na aba Registros.
+- Um PV pode ser incluído ou alterado posteriormente em **Detalhes**, ficando registrada a alteração no histórico com responsável, data e hora.
+- A verificação de PV duplicado só acontece quando um PV foi informado. Pedidos diferentes podem permanecer sem PV.
+- Cliente/empresa, vendedor e equipamento continuam obrigatórios.
 
-## Preparação / publicação
-Projeto Firebase: `acompanhamentopcpass` (configuração já preenchida em `firebase-config.js`).
-
-1. Faça backup do arquivo atual `firestore.rules` no console Firebase e dos arquivos atuais do GitHub.
-2. Publique **primeiro** o arquivo `firestore.rules` desta V6 em Firebase > Firestore Database > Regras.
-3. No GitHub do Acompanhamento de Pedidos, atualize apenas `index.html` e `app.js` com os arquivos desta V6. Deixe `firebase-config.js` como está.
-4. Confirme a publicação em Settings > Pages e recarregue com Ctrl+F5.
-5. Teste com PV fictício: cadastro, data combinada, edição, histórico, exclusão, aba Registros e consulta de pedido arquivado.
-
-## Permissões
-- PCP altera apenas status PCP; Assistência altera apenas status Assistência. Outros dados (inclusive prazo combinado) podem ser editados por usuários ativos.
-- **Exclusão lógica pode ser feita por qualquer usuário com perfil ativo**. Nome/UID do autor e carimbo de horário do servidor são gravados no Firestore e o evento é registrado atomicamente.
-- Excluídos não podem ser alterados pelo aplicativo e não são apagados fisicamente, inclusive seus comentários e anexos.
-- Regras não autorizam exclusão física a partir do cliente.
+## Atualização online: Firebase `acompanhamentopcpass`
+1. No Firebase > Firestore Database > Regras, faça backup das regras atuais.
+2. Publique o `firestore.rules` desta versão V7: a validação permite `pv` como string vazia, sem alterar as permissões por setor e a exclusão lógica.
+3. No GitHub do Acompanhamento de Pedidos, substitua somente `index.html` e `app.js` pelos arquivos da V7.
+4. Mantenha o `firebase-config.js` atual; a configuração entregue no ZIP também aponta para `acompanhamentopcpass`.
+5. Após o Pages publicar, recarregue o site com Ctrl+F5 e teste um pedido fictício sem PV. Abra Detalhes depois, informe o PV e confirme o registro no histórico.
 
 ## Compatibilidade
-Pedidos cadastrados nas versões anteriores, sem `agreedDate` ou `deleted`, continuam aparecendo como ativos e com prazo não definido. A nova versão preserva o histórico existente e o conteúdo dos anexos.
+Os pedidos antigos, históricos, status, anexos, registros de criação/exclusão e data combinada permanecem no Firestore. Não exclua o banco ou as coleções. A publicação das regras não modifica os documentos existentes.
 
-## Observação
-A aba Registros apresenta os eventos de criação dos documentos existentes e eventos de exclusão da V6. Pedidos que tenham sido excluídos fisicamente no passado não são recuperáveis por esta atualização.
+## Segurança
+O site requer login e perfil ativo na coleção `usuarios`. PCP pode alterar apenas o status PCP e Assistência apenas o da Assistência. As regras devem ser publicadas antes de testar o cadastro sem PV.
